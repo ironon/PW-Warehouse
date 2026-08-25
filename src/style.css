@@ -1,0 +1,271 @@
+:root {
+  --bg: #f5f5f7;
+  --bg-elevated: #ffffff;
+  --bg-hover: #eceef1;
+  --text: #1c1e21;
+  --text-muted: #6b7280;
+  --border: #dfe1e6;
+  --accent: #2f6fed;
+  --accent-contrast: #ffffff;
+  --accent-bg: rgba(47, 111, 237, 0.1);
+  --danger: #d64545;
+  --danger-bg: rgba(214, 69, 69, 0.1);
+  --success: #1f9254;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171d;
+    --bg-elevated: #1f2028;
+    --bg-hover: #2a2c36;
+    --text: #e5e7eb;
+    --text-muted: #9ca3af;
+    --border: #2e303a;
+    --accent: #5b8def;
+    --accent-contrast: #0b0d12;
+    --accent-bg: rgba(91, 141, 239, 0.15);
+    --danger: #f07171;
+    --danger-bg: rgba(240, 113, 113, 0.15);
+    --success: #3fb875;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#app {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Shared Add-tab panel layout ------------------------------------------- */
+
+.panel-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.panel-toolbar input[type='text'],
+.panel-toolbar input[type='search'] {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.btn {
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.btn:hover {
+  background: var(--bg-hover);
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+.btn-danger {
+  color: var(--danger);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.panel-row:hover {
+  background: var(--bg-hover);
+  cursor: pointer;
+}
+
+.panel-row.expanded {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.form-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.form-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.field input,
+.field select,
+.field textarea {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.error-banner {
+  background: var(--danger-bg);
+  color: var(--danger);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.ok-banner {
+  background: rgba(31, 146, 84, 0.12);
+  color: var(--success);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+/* Every tab's root wrapper shares this padding, so narrow it in one place. */
+.search-view,
+.add-view,
+.scan-view,
+.print-view,
+.logs-view,
+.trash-view {
+  padding: 28px 32px;
+}
+
+@media (max-width: 860px) {
+  .search-view,
+  .add-view,
+  .scan-view,
+  .print-view,
+  .logs-view,
+  .trash-view {
+    padding: 16px 14px 32px;
+  }
+
+  /* Side-by-side fields don't fit a phone. */
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Search box + action button stack instead of squeezing. */
+  .panel-toolbar {
+    flex-wrap: wrap;
+  }
+  .panel-toolbar input[type='text'],
+  .panel-toolbar input[type='search'] {
+    flex: 1 1 100%;
+  }
+
+  .panel-row {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 10px 12px;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+  }
+  .form-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  /* iOS Safari zooms the page when focusing an input under 16px. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

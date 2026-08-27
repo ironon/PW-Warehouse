@@ -16,13 +16,23 @@ import {
   sendMessage,
   cancel,
   resetChat,
+  notePlanApplied,
+  historyError,
   type ChatMessage,
 } from '../store/aiChat'
 import { isAgentConfigured } from '../lib/aiAgent'
 import PendingMoveBadge from '../components/PendingMoveBadge.vue'
+import AiHistoryPanel from './ai/AiHistoryPanel.vue'
+import GeminiDebugPanel from '../components/GeminiDebugPanel.vue'
+import { exchanges } from '../lib/geminiDebug'
 import Icon from '../components/Icon.vue'
 
 const configured = isAgentConfigured()
+
+const view = ref<'chat' | 'history'>('chat')
+
+const showDebug = ref(false)
+const agentCalls = computed(() => exchanges.value.filter((e) => e.source === 'agent').length)
 
 const draft = ref('')
 const applyError = ref('')
@@ -74,7 +84,11 @@ async function applyPlan(message: ChatMessage, index: number) {
   applyError.value = ''
   applyingIndex.value = index
   try {
-    message.applied = await applyAgentPlan(chosen.map((r) => r.op))
+    const result = await applyAgentPlan(chosen.map((r) => r.op))
+    message.applied = result
+    // Annotate the shared history with what was actually run. Deliberately
+    // after the fact and non-throwing: the warehouse change already happened.
+    await notePlanApplied(message, result)
   } catch (err) {
     applyError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -128,150 +142,215 @@ function useExample(text: string) {
 
 <template>
   <div class="ai-view">
-    <div v-if="!configured" class="form-card setup-note">
-      <h3>Gemini isn't set up yet</h3>
-      <p>
-        Create an API key at
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>,
-        put it in <code>.env.local</code> as <code>VITE_GEMINI_API_KEY</code>, then rebuild.
-      </p>
+    <div class="tabs">
+      <button :class="{ active: view === 'chat' }" @click="view = 'chat'">Chat</button>
+      <button :class="{ active: view === 'history' }" @click="view = 'history'">
+        Conversation History
+        <span v-if="warehouse.aiConversations.length" class="tab-count">
+          {{ warehouse.aiConversations.length }}
+        </span>
+      </button>
     </div>
 
-    <!-- Outstanding physical work ---------------------------------------- -->
-    <section v-if="pending.length" class="form-card pending-card">
-      <div class="pending-head">
-        <h3 class="section-heading">
-          {{ pending.length }} proposal{{ pending.length === 1 ? '' : 's' }} waiting on someone
-        </h3>
-        <button class="btn small" :disabled="warehouse.saving" @click="rejectAllPending">Reject all</button>
-      </div>
-      <p class="hint">
-        These boxes are still at the address shown struck through. Tick one off once it has actually been carried —
-        a shelf scan that finds the box in its new spot will tick it off too.
-      </p>
-      <div class="pending-list">
-        <div v-for="c in pending" :key="c.id" class="pending-item">
-          <span class="pending-name">{{ c.label || c.id }}</span>
-          <PendingMoveBadge :container-id="c.id" />
-        </div>
-      </div>
-    </section>
+    <AiHistoryPanel v-if="view === 'history'" />
 
-    <!-- Conversation ------------------------------------------------------ -->
-    <section class="form-card chat-card">
-      <div class="chat-head">
-        <h3 class="section-heading">Ask the warehouse agent</h3>
-        <div class="head-actions">
-          <button class="btn small" @click="openRules">Placement rules</button>
-          <button v-if="messages.length" class="btn small" @click="resetChat">New conversation</button>
-        </div>
-      </div>
-
-      <div v-if="showRules" class="rules-editor">
-        <label>Standing rules the agent must follow when placing boxes</label>
-        <textarea v-model="rulesDraft" rows="10"></textarea>
-        <p class="hint">
-          Shared by everyone and used on every request. Kept out of the code so it can change when the way the
-          warehouse is run changes.
+    <template v-else>
+      <div v-if="!configured" class="form-card setup-note">
+        <h3>Gemini isn't set up yet</h3>
+        <p>
+          Create an API key at
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>,
+          put it in <code>.env.local</code> as <code>VITE_GEMINI_API_KEY</code>, then rebuild.
         </p>
-        <div class="form-actions">
-          <button class="btn" @click="showRules = false">Cancel</button>
-          <button class="btn" @click="rulesDraft = DEFAULT_PLACEMENT_RULES">Reset to default</button>
-          <button class="btn btn-primary" :disabled="rulesSaving" @click="saveRules">
-            {{ rulesSaving ? 'Saving…' : 'Save rules' }}
+      </div>
+
+      <!-- Outstanding physical work ---------------------------------------- -->
+      <section v-if="pending.length" class="form-card pending-card">
+        <div class="pending-head">
+          <h3 class="section-heading">
+            {{ pending.length }} proposal{{ pending.length === 1 ? '' : 's' }} waiting on someone
+          </h3>
+          <button class="btn small" :disabled="warehouse.saving" @click="rejectAllPending">Reject all</button>
+        </div>
+        <p class="hint">
+          These boxes are still at the address shown struck through. Tick one off once it has actually been carried —
+          a shelf scan that finds the box in its new spot will tick it off too.
+        </p>
+        <div class="pending-list">
+          <div v-for="c in pending" :key="c.id" class="pending-item">
+            <span class="pending-name">{{ c.label || c.id }}</span>
+            <PendingMoveBadge :container-id="c.id" />
+          </div>
+        </div>
+      </section>
+
+      <!-- Conversation ------------------------------------------------------ -->
+      <section class="form-card chat-card">
+        <div class="chat-head">
+          <h3 class="section-heading">Ask the warehouse agent</h3>
+          <div class="head-actions">
+            <button v-if="agentCalls" class="btn small" @click="showDebug = !showDebug">
+              {{ showDebug ? 'Hide debug' : 'Debug' }} ({{ agentCalls }})
+            </button>
+            <button class="btn small" @click="openRules">Placement rules</button>
+            <button v-if="messages.length" class="btn small" @click="resetChat">New conversation</button>
+          </div>
+        </div>
+
+        <GeminiDebugPanel v-if="showDebug" source="agent" @close="showDebug = false" />
+
+        <div v-if="showRules" class="rules-editor">
+          <label>Standing rules the agent must follow when placing boxes</label>
+          <textarea v-model="rulesDraft" rows="10"></textarea>
+          <p class="hint">
+            Shared by everyone and used on every request. Kept out of the code so it can change when the way the
+            warehouse is run changes.
+          </p>
+          <div class="form-actions">
+            <button class="btn" @click="showRules = false">Cancel</button>
+            <button class="btn" @click="rulesDraft = DEFAULT_PLACEMENT_RULES">Reset to default</button>
+            <button class="btn btn-primary" :disabled="rulesSaving" @click="saveRules">
+              {{ rulesSaving ? 'Saving…' : 'Save rules' }}
+            </button>
+          </div>
+        </div>
+
+        <div ref="scroller" class="messages">
+          <div v-if="messages.length === 0" class="intro">
+            <p class="hint">
+              Describe what you want changed. The agent knows every container, its address, its type and its contents,
+              and answers with a plan you tick through before anything is written.
+            </p>
+            <p class="hint">
+              Moves and merges are never done for you — they become proposals that stay visible in Search and Add until
+              somebody confirms the box was actually carried.
+            </p>
+            <div class="examples">
+              <button v-for="ex in examples" :key="ex" class="example" @click="useExample(ex)">{{ ex }}</button>
+            </div>
+          </div>
+
+          <div v-for="(m, i) in messages" :key="i" class="message" :class="m.role">
+            <div class="bubble">{{ m.text }}</div>
+
+            <!-- Plan review -->
+            <div v-if="m.rows && m.rows.length" class="plan">
+              <div class="plan-head">
+                <strong>Proposed changes</strong>
+                <span class="muted">{{ m.rows.length }} operation{{ m.rows.length === 1 ? '' : 's' }}</span>
+              </div>
+
+              <div v-if="!m.applied" class="select-actions">
+                <button class="btn small" @click="setAll(m, true)">Select all</button>
+                <button class="btn small" @click="setAll(m, false)">Select none</button>
+              </div>
+
+              <label v-for="row in m.rows" :key="row.index" class="op-row" :class="{ invalid: !!row.error }">
+                <input v-model="row.selected" type="checkbox" :disabled="!!row.error || !!m.applied" />
+                <span class="op-body">
+                  <span class="op-summary">{{ row.summary }}</span>
+                  <span v-if="row.op.reason && !row.error" class="op-reason">{{ row.op.reason }}</span>
+                </span>
+                <span v-if="row.needsConfirmation && !row.error" class="op-tag">needs confirming</span>
+                <span v-else-if="row.error" class="op-tag bad">can't apply</span>
+              </label>
+
+              <p v-if="m.applied" class="applied-note">
+                Applied. {{ m.applied.applied }} change{{ m.applied.applied === 1 ? '' : 's' }} written<template
+                  v-if="m.applied.proposed"
+                >, {{ m.applied.proposed }} proposal{{ m.applied.proposed === 1 ? '' : 's' }} now waiting to be
+                  confirmed</template
+                >.
+              </p>
+              <div v-else class="form-actions">
+                <button
+                  class="btn btn-primary"
+                  :disabled="selectedRows(m).length === 0 || applyingIndex === i || warehouse.saving"
+                  @click="applyPlan(m, i)"
+                >
+                  {{ applyingIndex === i ? 'Applying…' : `Apply ${selectedRows(m).length} operation${selectedRows(m).length === 1 ? '' : 's'}` }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="thinking" class="message model">
+            <div class="bubble thinking">
+              <Icon name="sparkles" :size="14" />
+              <span>Thinking…</span>
+              <button class="btn small" @click="cancel">Stop</button>
+            </div>
+          </div>
+        </div>
+
+        <p v-if="chatError" class="error-banner">{{ chatError }}</p>
+        <p v-if="applyError" class="error-banner">{{ applyError }}</p>
+
+        <div class="composer">
+          <textarea
+            v-model="draft"
+            rows="2"
+            :disabled="!configured"
+            placeholder="e.g. move the drill bits somewhere easier to reach"
+            @keydown="onKeydown"
+          ></textarea>
+          <button class="btn btn-primary send" :disabled="!draft.trim() || thinking || !configured" @click="send">
+            <Icon name="send" :size="16" />
+            <span>Send</span>
           </button>
         </div>
-      </div>
 
-      <div ref="scroller" class="messages">
-        <div v-if="messages.length === 0" class="intro">
-          <p class="hint">
-            Describe what you want changed. The agent knows every container, its address, its type and its contents,
-            and answers with a plan you tick through before anything is written.
-          </p>
-          <p class="hint">
-            Moves and merges are never done for you — they become proposals that stay visible in Search and Add until
-            somebody confirms the box was actually carried.
-          </p>
-          <div class="examples">
-            <button v-for="ex in examples" :key="ex" class="example" @click="useExample(ex)">{{ ex }}</button>
-          </div>
-        </div>
-
-        <div v-for="(m, i) in messages" :key="i" class="message" :class="m.role">
-          <div class="bubble">{{ m.text }}</div>
-
-          <!-- Plan review -->
-          <div v-if="m.rows && m.rows.length" class="plan">
-            <div class="plan-head">
-              <strong>{{ m.planSummary || 'Proposed changes' }}</strong>
-              <span class="muted">{{ m.rows.length }} operation{{ m.rows.length === 1 ? '' : 's' }}</span>
-            </div>
-
-            <div v-if="!m.applied" class="select-actions">
-              <button class="btn small" @click="setAll(m, true)">Select all</button>
-              <button class="btn small" @click="setAll(m, false)">Select none</button>
-            </div>
-
-            <label v-for="row in m.rows" :key="row.index" class="op-row" :class="{ invalid: !!row.error }">
-              <input v-model="row.selected" type="checkbox" :disabled="!!row.error || !!m.applied" />
-              <span class="op-body">
-                <span class="op-summary">{{ row.summary }}</span>
-                <span v-if="row.op.reason && !row.error" class="op-reason">{{ row.op.reason }}</span>
-              </span>
-              <span v-if="row.needsConfirmation && !row.error" class="op-tag">needs confirming</span>
-              <span v-else-if="row.error" class="op-tag bad">can't apply</span>
-            </label>
-
-            <p v-if="m.applied" class="applied-note">
-              Applied. {{ m.applied.applied }} change{{ m.applied.applied === 1 ? '' : 's' }} written<template
-                v-if="m.applied.proposed"
-              >, {{ m.applied.proposed }} proposal{{ m.applied.proposed === 1 ? '' : 's' }} now waiting to be
-                confirmed</template
-              >.
-            </p>
-            <div v-else class="form-actions">
-              <button
-                class="btn btn-primary"
-                :disabled="selectedRows(m).length === 0 || applyingIndex === i || warehouse.saving"
-                @click="applyPlan(m, i)"
-              >
-                {{ applyingIndex === i ? 'Applying…' : `Apply ${selectedRows(m).length} operation${selectedRows(m).length === 1 ? '' : 's'}` }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="thinking" class="message model">
-          <div class="bubble thinking">
-            <Icon name="sparkles" :size="14" />
-            <span>Thinking…</span>
-            <button class="btn small" @click="cancel">Stop</button>
-          </div>
-        </div>
-      </div>
-
-      <p v-if="chatError" class="error-banner">{{ chatError }}</p>
-      <p v-if="applyError" class="error-banner">{{ applyError }}</p>
-
-      <div class="composer">
-        <textarea
-          v-model="draft"
-          rows="2"
-          :disabled="!configured"
-          placeholder="e.g. move the drill bits somewhere easier to reach"
-          @keydown="onKeydown"
-        ></textarea>
-        <button class="btn btn-primary send" :disabled="!draft.trim() || thinking || !configured" @click="send">
-          <Icon name="send" :size="16" />
-          <span>Send</span>
-        </button>
-      </div>
-    </section>
+        <p v-if="historyError" class="hint history-warn">{{ historyError }}</p>
+      </section>
+    </template>
   </div>
 </template>
 
 <style scoped>
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  font-size: 14px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-count {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+/* Non-fatal: the exchange worked, it just isn't in the shared record. */
+.history-warn {
+  color: var(--danger);
+  margin-top: 10px;
+}
+
 .ai-view {
   display: flex;
   flex-direction: column;

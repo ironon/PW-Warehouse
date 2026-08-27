@@ -10,6 +10,8 @@ import {
   type ScanChange,
 } from '../store/warehouse'
 import { scanShelf, fileToScaledJpegBase64, isGeminiConfigured, GeminiNotConfiguredError } from '../lib/gemini'
+import GeminiDebugPanel from '../components/GeminiDebugPanel.vue'
+import { exchanges } from '../lib/geminiDebug'
 
 type Phase = 'setup' | 'scanning' | 'review' | 'done'
 
@@ -32,10 +34,15 @@ const file = ref<File | null>(null)
 const previewUrl = ref('')
 const error = ref('')
 const geminiNotes = ref('')
+// Set when the model's answer was cut off partway through the shelf.
+const truncated = ref(false)
 const ambiguous = ref<string[]>([])
 const unchanged = ref(0)
 const appliedCount = ref(0)
 const rows = ref<{ change: ScanChange; selected: boolean }[]>([])
+
+const showDebug = ref(false)
+const scanCalls = computed(() => exchanges.value.filter((e) => e.source === 'scan').length)
 
 const shelves = computed(() => knownShelves())
 const dupes = computed(() => duplicateLabels())
@@ -72,7 +79,10 @@ async function runScan() {
       extraInstructions: extraInstructions.value,
     })
     geminiNotes.value = result.notes
-    const diff = computeScanDiff(effectiveShelf.value, result.boxes)
+    truncated.value = result.truncated === true
+    const diff = computeScanDiff(effectiveShelf.value, result.boxes, {
+      partialReading: truncated.value,
+    })
     rows.value = diff.changes.map((change) => ({ change, selected: true }))
     ambiguous.value = diff.ambiguous
     unchanged.value = diff.unchanged
@@ -108,6 +118,7 @@ function reset() {
   rows.value = []
   ambiguous.value = []
   geminiNotes.value = ''
+  truncated.value = false
   unchanged.value = 0
   error.value = ''
 }
@@ -127,6 +138,13 @@ function kindLabel(kind: ScanChange['kind']): string {
 <template>
   <div class="scan-view">
     <p v-if="error" class="error-banner">{{ error }}</p>
+
+    <div v-if="scanCalls" class="debug-bar">
+      <button class="btn small" @click="showDebug = !showDebug">
+        {{ showDebug ? 'Hide' : 'Debug' }} ({{ scanCalls }} call{{ scanCalls === 1 ? '' : 's' }})
+      </button>
+    </div>
+    <GeminiDebugPanel v-if="showDebug" source="scan" @close="showDebug = false" />
 
     <div v-if="!configured" class="form-card setup-note">
       <h3>Gemini isn't set up yet</h3>
@@ -214,6 +232,11 @@ function kindLabel(kind: ScanChange['kind']): string {
           {{ rows.length }} change{{ rows.length === 1 ? '' : 's' }} proposed, {{ unchanged }} box{{ unchanged === 1 ? '' : 'es' }}
           already in the right place. Untick anything that looks wrong before applying.
         </p>
+        <p v-if="truncated" class="error-banner">
+          Gemini's answer was cut short, so this is a partial reading of the shelf. Boxes it never got to are
+          <strong>not</strong> listed for the trash — that check is switched off for this scan. Rerun it, or raise
+          <code>VITE_GEMINI_SCAN_MAX_TOKENS</code>, for a complete pass.
+        </p>
         <p v-if="geminiNotes" class="hint notes-from-model">Gemini noted: {{ geminiNotes }}</p>
         <p v-if="ambiguous.length" class="hint warn-inline">
           Skipped (duplicate labels, can't tell which container): {{ ambiguous.join(', ') }}
@@ -280,6 +303,12 @@ function kindLabel(kind: ScanChange['kind']): string {
 </template>
 
 <style scoped>
+.debug-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
 .scan-view {
   max-width: 900px;
 }

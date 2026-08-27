@@ -1,11 +1,19 @@
 // Gemini vision client: given a photo of one shelf, returns which labelled
 // box sits at which position on that shelf.
 
+import { parseLooseJson } from './jsonRepair'
+import { recordExchange, noteParseResult } from './geminiDebug'
+
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 // gemini-2.5-* is retired for keys issued after its cutoff: generateContent
 // answers 404 "no longer available to new users" even though ListModels still
 // advertises it. 3.6-flash is the replacement the API itself names.
 const MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.6-flash'
+
+// Thinking tokens share the output budget with the answer, so an unset ceiling
+// gets a shelf full of boxes cut off partway through the JSON. See aiAgent.ts.
+const MAX_OUTPUT_TOKENS = Number(import.meta.env.VITE_GEMINI_SCAN_MAX_TOKENS || 8192)
+const THINKING_LEVEL = import.meta.env.VITE_GEMINI_THINKING_LEVEL || 'low'
 
 export class GeminiNotConfiguredError extends Error {
   constructor() {
@@ -31,6 +39,8 @@ export interface ScannedBox {
 export interface ScanResponse {
   boxes: ScannedBox[]
   notes: string
+  /** True when the reading is partial — see the note in `notes`. */
+  truncated?: boolean
 }
 
 /**
@@ -122,13 +132,19 @@ ${extra}`
   }`
 }
 
+// `boxes` is generated before `notes` on purpose. Structured output follows
+// schema order, and a free-text field placed first can swallow the whole
+// output budget - on the planning call the same mistake produced replies with
+// zero results in them. Keep the data first and the prose last.
 const RESPONSE_SCHEMA = {
   type: 'object',
+  propertyOrdering: ['boxes', 'notes'],
   properties: {
     boxes: {
       type: 'array',
       items: {
         type: 'object',
+        propertyOrdering: ['label', 'level', 'column', 'containerType', 'confidence'],
         properties: {
           label: { type: 'string' },
           level: { type: 'string' },
@@ -155,6 +171,17 @@ export async function scanShelf(input: {
 }): Promise<ScanResponse> {
   if (!API_KEY) throw new GeminiNotConfiguredError()
 
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+    responseSchema: RESPONSE_SCHEMA,
+    temperature: 0,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  }
+  if (THINKING_LEVEL && THINKING_LEVEL !== 'off') {
+    generationConfig.thinkingConfig = { thinkingLevel: THINKING_LEVEL }
+  }
+
+  const startedAt = Date.now()
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
     {
@@ -169,16 +196,32 @@ export async function scanShelf(input: {
             ],
           },
         ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0,
-        },
+        generationConfig,
       }),
     }
   )
 
   const json = await res.json()
+  const durationMs = Date.now() - startedAt
+  const candidate = json?.candidates?.[0]
+  const usage = json?.usageMetadata
+  const rawText: string =
+    candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? ''
+
+  const debug = recordExchange({
+    source: 'scan',
+    model: MODEL,
+    httpStatus: res.status,
+    finishReason: candidate?.finishReason,
+    promptTokens: usage?.promptTokenCount,
+    outputTokens: usage?.candidatesTokenCount,
+    thoughtsTokens: usage?.thoughtsTokenCount,
+    totalTokens: usage?.totalTokenCount,
+    rawText,
+    durationMs,
+    errorBody: res.ok ? undefined : JSON.stringify(json?.error ?? json, null, 2),
+  })
+
   if (!res.ok) {
     const message = json?.error?.message || res.statusText
     if (res.status === 404) {
@@ -199,21 +242,44 @@ export async function scanShelf(input: {
     throw new Error(`Gemini request failed: ${message}`)
   }
 
-  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text
-  if (!text) {
-    const reason = json?.candidates?.[0]?.finishReason
-    throw new Error(`Gemini returned no result${reason ? ` (finishReason: ${reason})` : ''}.`)
+  const reason: string | undefined = candidate?.finishReason
+  const ranOut = reason === 'MAX_TOKENS'
+  const outOfRoom =
+    `Gemini hit its output limit before it finished reading the shelf${
+      usage?.thoughtsTokenCount ? ` — it spent ${usage.thoughtsTokenCount} tokens thinking first` : ''
+    }. Raise VITE_GEMINI_SCAN_MAX_TOKENS (currently ${MAX_OUTPUT_TOKENS}) in .env.local, or set ` +
+    'VITE_GEMINI_THINKING_LEVEL=low. Open Debug for the details.'
+
+  if (!rawText) {
+    noteParseResult(debug.id, { error: 'empty response' })
+    if (ranOut) throw new Error(outOfRoom)
+    throw new Error(
+      `Gemini returned no result${reason ? ` (finishReason: ${reason})` : ''}. Open Debug to see the raw response.`
+    )
   }
 
-  let parsed: ScanResponse
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error('Gemini returned a response that was not valid JSON.')
+  const parsed = parseLooseJson<ScanResponse>(rawText)
+  noteParseResult(debug.id, { error: parsed.error, repaired: parsed.repaired })
+
+  if (!parsed.ok || !parsed.value) {
+    if (ranOut) throw new Error(outOfRoom)
+    throw new Error(
+      `Gemini's answer wasn't valid JSON (${parsed.error}). Open Debug to see exactly what came back.`
+    )
   }
+
+  const boxes = Array.isArray(parsed.value.boxes) ? parsed.value.boxes : []
+  // A repaired response is a partial reading of the shelf. Every box it didn't
+  // reach would otherwise be proposed for the trash, so this has to be loud.
+  const note = parsed.repaired
+    ? `The response was cut short, so only ${boxes.length} box${
+        boxes.length === 1 ? '' : 'es'
+      } were read. Boxes further along the shelf are missing — do NOT apply the "not seen" trash proposals from this scan.`
+    : ''
 
   return {
-    boxes: Array.isArray(parsed.boxes) ? parsed.boxes : [],
-    notes: parsed.notes ?? '',
+    boxes,
+    notes: [parsed.value.notes ?? '', note].filter(Boolean).join(' '),
+    truncated: parsed.repaired,
   }
 }

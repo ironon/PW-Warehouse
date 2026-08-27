@@ -34,7 +34,8 @@ out of scope" below.
   plan goes through a review screen, and anything that means physically
   carrying a box becomes a *proposal* rather than a change — see below.
 - **Logs** is an append-only record of every database change, with who made
-  it and when.
+  it and when. **AI Work → Conversation History** is the companion to it:
+  Logs says what changed, the history says what was asked for and why.
 - **Deleted** is a recoverable trash can for containers.
 - The sidebar footer holds a username, stored in `localStorage`, used to
   attribute log entries. There is no real authentication — it's a label, not
@@ -103,6 +104,27 @@ reason. These live in the database (`settings/placementRules`), not in code,
 and are editable from **AI Work → Placement rules**, because they are a
 business rule that changes without a rebuild. The seed text is
 `DEFAULT_PLACEMENT_RULES` in [src/store/warehouse.ts](src/store/warehouse.ts).
+
+### Conversation history
+
+Every exchange is written to `aiConversations` in Firebase and shown under
+**AI Work → Conversation History**, so anyone can see what has been asked of
+the agent and what it actually changed — not just whoever was at the keyboard.
+Each conversation records who was talking, the full thread, every operation
+that was proposed, and which of those were applied, by whom and when. An
+operation that was proposed and then unticked stays visible as such, greyed
+out, so the record shows what was rejected as well as what ran.
+
+The history is read-only and separate from the live chat: reloading the page
+still starts a fresh conversation, because a plan is only meaningful against
+the shelf state it was drawn up from. "Forget this conversation" removes the
+discussion only — the changes it made stay in the Logs tab, since the two
+record different things.
+
+History writes are deliberately outside the normal saving path: they record
+what happened rather than change the warehouse, so if one fails you get a
+notice under the composer and the conversation carries on. The last 100
+conversations are loaded.
 
 ### What the agent may do
 
@@ -233,7 +255,8 @@ facing" trust model you chose for the previous Sheets-backed version.
 **This is a materially bigger exposure than the old model**: there, an
 attacker needed to extract an embedded key first; here, anyone who
 discovers the database URL can read, write, or delete everything with no
-secret at all. Do not host this anywhere reachable from the public
+secret at all. That now includes the AI Work conversation history, which is
+free text and may describe the contents of the warehouse in detail. Do not host this anywhere reachable from the public
 internet. If that ever changes, add Firebase Authentication (e.g. Google
 Sign-In restricted to `@pixw.us`) and tighten the rules to require
 `auth != null` — ask and I can wire that up.
@@ -250,6 +273,58 @@ Work) both default to `gemini-3.6-flash`. They are separate settings because
 planning a reorganisation is a reasoning job rather than an OCR one — point
 the planning one at something stronger (`gemini-3.1-pro-preview`) if plans
 come out sloppy.
+
+### Why the response schema puts data before prose
+
+This is the single most important thing to know before editing either Gemini
+schema, and it is not obvious.
+
+Structured output is generated **in schema order**. The planning schema
+originally listed `reply` and `planSummary` before `operations`, and the result
+was that the model spent its entire answer on the prose fields and returned
+**zero operations** — or fell into a repetition loop inside `planSummary`
+("Done. Bye. End text string. Done. Bye…" for 15,000 tokens) until it hit the
+output ceiling, producing truncated, unparseable JSON. That is what "it takes
+forever and then returns invalid JSON" actually was: one cause, both symptoms.
+
+Measured on one identical request against `gemini-3.6-flash`:
+
+| schema order | operations returned | time |
+| --- | --- | --- |
+| `reply`, `planSummary`, `operations` | **0** | 5–60s |
+| `operations`, `reply` | **27** | ~10s |
+
+So both schemas now put the data array first, declare `propertyOrdering`
+explicitly, and keep exactly one free-text field, placed last. `planSummary`
+was removed outright — it was redundant with `reply` and was where the loop
+happened. Temperature was also raised off near-zero (greedy decoding is what
+tips a model into repetition loops).
+
+Note what this was **not**: quotation marks in labels. Structured output
+escapes those correctly, and `M5 screws "hex head"` round-trips fine — it was
+tested. Labels are safe to name however you like.
+
+Belt and braces, in case a response is still cut short:
+
+- `maxOutputTokens` is set explicitly on both calls
+  (`VITE_GEMINI_SCAN_MAX_TOKENS`, `VITE_GEMINI_PLANNING_MAX_TOKENS`). Thinking
+  tokens come out of the same budget as the answer.
+- [src/lib/jsonRepair.ts](src/lib/jsonRepair.ts) recovers the operations that
+  did arrive from a truncated document, rather than throwing the reply away,
+  and the reply says plainly that it is partial.
+- **A truncated shelf scan never proposes trashing anything.** "Not in the
+  list" would otherwise mean "the response ran out before reaching it", and
+  every box past the cut-off would be proposed for deletion.
+
+### The Debug button
+
+Both the Scan and AI Work tabs have a **Debug** button that shows the last 10
+Gemini calls: the raw response text exactly as it arrived, the `finishReason`,
+the token counts including thinking tokens, how long the call took, and any
+parse error. `MAX_TOKENS` there is called out explicitly as the usual cause of
+bad JSON. "Copy all details" puts the lot on the clipboard.
+
+Nothing is persisted or sent anywhere — it lives in the tab until you reload.
 
 ### When Gemini isn't working
 

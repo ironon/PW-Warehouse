@@ -153,6 +153,44 @@ def text_of(body: dict) -> str:
         return ""
 
 
+def stop_info(body: dict) -> str:
+    """finishReason and token counts - the two things that explain a reply that
+    arrived as broken JSON."""
+    try:
+        reason = body["candidates"][0].get("finishReason", "?")
+    except (KeyError, IndexError, TypeError):
+        reason = "?"
+    usage = body.get("usageMetadata") or {}
+    return (
+        f"finishReason={reason} "
+        f"prompt={usage.get('promptTokenCount', '?')} "
+        f"output={usage.get('candidatesTokenCount', '?')} "
+        f"thoughts={usage.get('thoughtsTokenCount', '?')}"
+    )
+
+
+def check_json(raw: str, body: dict, label: str) -> bool:
+    """Reports whether a structured-output reply actually parsed, and why not."""
+    print(f"   {stop_info(body)}")
+    try:
+        json.loads(raw)
+        print(f"OK - valid JSON returned: {raw.strip()[:120]}")
+        return True
+    except json.JSONDecodeError as exc:
+        print(f"FAILED - {label} was not valid JSON: {exc}")
+        print(f"   last 200 characters received: {raw[-200:]!r}")
+        try:
+            reason = body["candidates"][0].get("finishReason")
+        except (KeyError, IndexError, TypeError):
+            reason = None
+        if reason == "MAX_TOKENS":
+            print("   -> CUT OFF at the output limit. Thinking tokens share the answer's")
+            print("      budget, so the reply stopped partway and has no ending. Raise")
+            print("      VITE_GEMINI_SCAN_MAX_TOKENS / VITE_GEMINI_PLANNING_MAX_TOKENS, or")
+            print("      set VITE_GEMINI_THINKING_LEVEL=low. This is not a parser bug.")
+        return False
+
+
 def main() -> int:
     env = load_env()
     api_key = os.environ.get("VITE_GEMINI_API_KEY") or env.get("VITE_GEMINI_API_KEY", "")
@@ -217,6 +255,7 @@ def main() -> int:
     )
     if status == 200 and isinstance(body, dict):
         print(f"OK - model replied: {text_of(body).strip()[:100]!r}")
+        print(f"   {stop_info(body)}")
     else:
         failures += 1
         report(status, body)
@@ -249,17 +288,13 @@ def main() -> int:
                     "required": ["boxes"],
                 },
                 "temperature": 0,
+                "maxOutputTokens": 8192,
             },
         },
     )
     if status == 200 and isinstance(body, dict):
-        raw = text_of(body)
-        try:
-            json.loads(raw)
-            print(f"OK - valid JSON returned: {raw.strip()[:120]}")
-        except json.JSONDecodeError:
+        if not check_json(text_of(body), body, "the scan response"):
             failures += 1
-            print(f"FAILED - response was not valid JSON: {raw[:200]!r}")
     else:
         failures += 1
         report(status, body)
@@ -302,20 +337,13 @@ def main() -> int:
                     "required": ["reply"],
                 },
                 "temperature": 0.2,
+                "maxOutputTokens": 16384,
             },
         },
     )
     if status == 200 and isinstance(body, dict):
-        raw = text_of(body)
-        try:
-            parsed = json.loads(raw)
-            print(f"OK - reply: {str(parsed.get('reply', ''))[:120]!r}")
-        except json.JSONDecodeError:
+        if not check_json(text_of(body), body, "the plan response"):
             failures += 1
-            print(f"FAILED - response was not valid JSON: {raw[:200]!r}")
-            finish = (body.get("candidates") or [{}])[0].get("finishReason")
-            if finish:
-                print(f"   finishReason: {finish}")
     else:
         failures += 1
         report(status, body)

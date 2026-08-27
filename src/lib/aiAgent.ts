@@ -11,6 +11,8 @@
 import type { DeepReadonly } from 'vue'
 import type { AgentOperation } from '../store/warehouse'
 import type { Container, ContainerType, Item, ItemStack } from './types'
+import { parseLooseJson } from './jsonRepair'
+import { recordExchange, noteParseResult } from './geminiDebug'
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 // Planning is a reasoning job rather than an OCR one, so this is worth
@@ -18,6 +20,20 @@ const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 // VITE_GEMINI_MODEL for exactly that reason. gemini-3.1-pro-preview is the
 // upgrade to try; the default stays on flash because it is not a preview.
 const MODEL = import.meta.env.VITE_GEMINI_PLANNING_MODEL || 'gemini-3.6-flash'
+
+// Gemini 3.x models think before answering, and those thinking tokens come out
+// of the SAME output budget as the answer. Left at the default, a plan of any
+// size gets cut off mid-JSON: the request is slow (all that thinking) and the
+// response is unparseable (it stopped partway). Both symptoms, one cause. So
+// the ceiling is set explicitly and generously.
+const MAX_OUTPUT_TOKENS = Number(import.meta.env.VITE_GEMINI_PLANNING_MAX_TOKENS || 16384)
+
+// Thinking tokens are billed and waited on like any others, and these requests
+// were spending thousands of them on trivial questions. 'low' roughly halved
+// the round trip in testing. The field name differs between model families, so
+// a model that rejects it gets one automatic retry without it (see request()).
+// Set to 'off' to skip it entirely.
+const THINKING_LEVEL = import.meta.env.VITE_GEMINI_THINKING_LEVEL || 'low'
 
 export class GeminiNotConfiguredError extends Error {
   constructor() {
@@ -40,8 +56,6 @@ export interface AgentTurn {
 export interface AgentReply {
   /** What the agent says back, in prose. */
   reply: string
-  /** One line describing the plan, empty when there is no plan this turn. */
-  planSummary: string
   /** Proposed changes. Empty when the agent is still asking questions. */
   operations: AgentOperation[]
 }
@@ -121,10 +135,9 @@ function systemInstruction(snap: WarehouseSnapshot): string {
 
 # How your answers are used
 
-Every reply has three parts:
-- "reply": what you say to the person. Always fill this in.
-- "planSummary": one line describing the plan, when you propose one.
-- "operations": the concrete changes. Leave this EMPTY when you are asking a question, explaining something, or answering without changing anything.
+Every reply has two parts:
+- "operations": the concrete changes, written FIRST. Leave this empty only when you are asking a question, explaining something, or answering without changing anything. If the person asked for changes, this is the part that matters — never describe changes in prose instead of putting them here.
+- "reply": what you say to the person. Keep it to a few sentences: say what the plan does and flag anything you were unsure about. Do NOT list the operations again in prose; the person sees them as a checklist. Never pad this field or repeat yourself.
 
 The person always sees your plan on a review screen and ticks off each operation before anything is written. So propose confidently, but never propose something you were not asked for.
 
@@ -174,8 +187,16 @@ Rules for operations:
 ${renderSnapshot(snap)}`
 }
 
+// Field order is load-bearing, not cosmetic. Structured output is generated
+// in schema order, and with the prose fields first this model reliably spent
+// its whole answer on them and returned ZERO operations - or fell into a
+// repetition loop inside a free-text field and ran to the token limit,
+// producing truncated JSON. Measured on the same request: prose-first gave 0
+// operations; operations-first gave 27, in a third of the time. So the array
+// is generated first, and there is exactly one free-text field left.
 const OPERATION_SCHEMA = {
   type: 'object',
+  propertyOrdering: ['op', 'containerId', 'otherContainerId', 'targetContainerId', 'location', 'reason'],
   properties: {
     op: {
       type: 'string',
@@ -212,10 +233,10 @@ const OPERATION_SCHEMA = {
 
 const RESPONSE_SCHEMA = {
   type: 'object',
+  propertyOrdering: ['operations', 'reply'],
   properties: {
-    reply: { type: 'string' },
-    planSummary: { type: 'string' },
     operations: { type: 'array', items: OPERATION_SCHEMA },
+    reply: { type: 'string' },
   },
   required: ['reply'],
 }
@@ -229,25 +250,54 @@ export async function askAgent(input: {
 }): Promise<AgentReply> {
   if (!API_KEY) throw new GeminiNotConfiguredError()
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
-      signal: input.signal,
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction(input.snapshot) }] },
-        contents: input.turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.2,
-        },
-      }),
-    }
-  )
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+    responseSchema: RESPONSE_SCHEMA,
+    // Not near-zero: greedy decoding is what tips a model into the repetition
+    // loops that produced 15,000 tokens of "Done. Bye. End." and a truncated
+    // response. Planning wants a little variety anyway.
+    temperature: 0.6,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  }
+  if (THINKING_LEVEL && THINKING_LEVEL !== 'off') {
+    generationConfig.thinkingConfig = { thinkingLevel: THINKING_LEVEL }
+  }
 
-  const json = await res.json()
+  const body = {
+    systemInstruction: { parts: [{ text: systemInstruction(input.snapshot) }] },
+    contents: input.turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+    generationConfig,
+  }
+
+  const startedAt = Date.now()
+  let { res, json } = await post(body, API_KEY, input.signal)
+
+  // Older model families don't know thinkingConfig and reject it outright.
+  // Retry once without it rather than making the feature unusable on them.
+  if (!res.ok && rejectedThinkingConfig(json)) {
+    delete generationConfig.thinkingConfig
+    ;({ res, json } = await post(body, API_KEY, input.signal))
+  }
+  const durationMs = Date.now() - startedAt
+  const candidate = json?.candidates?.[0]
+  const usage = json?.usageMetadata
+  const rawText: string =
+    candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? ''
+
+  const debug = recordExchange({
+    source: 'agent',
+    model: MODEL,
+    httpStatus: res.status,
+    finishReason: candidate?.finishReason,
+    promptTokens: usage?.promptTokenCount,
+    outputTokens: usage?.candidatesTokenCount,
+    thoughtsTokens: usage?.thoughtsTokenCount,
+    totalTokens: usage?.totalTokenCount,
+    rawText,
+    durationMs,
+    errorBody: res.ok ? undefined : JSON.stringify(json?.error ?? json, null, 2),
+  })
+
   if (!res.ok) {
     const message = json?.error?.message || res.statusText
     if (res.status === 404) {
@@ -268,27 +318,76 @@ export async function askAgent(input: {
     throw new Error(`Gemini request failed: ${message}`)
   }
 
-  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text
-  if (!text) {
-    const reason = json?.candidates?.[0]?.finishReason
-    if (reason === 'MAX_TOKENS') {
-      throw new Error(
-        'Gemini ran out of room before finishing. Ask for a smaller piece of work (one shelf at a time, say).'
-      )
-    }
-    throw new Error(`Gemini returned no result${reason ? ` (finishReason: ${reason})` : ''}.`)
+  const reason: string | undefined = candidate?.finishReason
+  const ranOut = reason === 'MAX_TOKENS'
+
+  if (!rawText) {
+    noteParseResult(debug.id, { error: 'empty response' })
+    if (ranOut) throw new Error(outOfRoomMessage(usage))
+    throw new Error(
+      `Gemini returned no result${reason ? ` (finishReason: ${reason})` : ''}. Open Debug to see the raw response.`
+    )
   }
 
-  let parsed: Partial<AgentReply>
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error('Gemini returned a response that was not valid JSON.')
+  const parsed = parseLooseJson<Partial<AgentReply>>(rawText)
+  noteParseResult(debug.id, { error: parsed.error, repaired: parsed.repaired })
+
+  if (!parsed.ok || !parsed.value) {
+    if (ranOut) throw new Error(outOfRoomMessage(usage))
+    throw new Error(
+      `Gemini's answer wasn't valid JSON (${parsed.error}). Open Debug to see exactly what came back.`
+    )
   }
+
+  const value = parsed.value
+  const operations = Array.isArray(value.operations) ? value.operations : []
+
+  // A repaired reply is a partial one. Say so rather than presenting half a
+  // plan as though it were the whole plan.
+  const truncationNote = parsed.repaired
+    ? `
+
+[This answer was cut short${
+        ranOut ? ' because it hit the output limit' : ''
+      }, and only the ${operations.length} operation${
+        operations.length === 1 ? '' : 's'
+      } that arrived intact are shown. Ask for a smaller piece of work — one shelf at a time — to get the rest.]`
+    : ''
 
   return {
-    reply: parsed.reply?.trim() || '(no reply)',
-    planSummary: parsed.planSummary?.trim() ?? '',
-    operations: Array.isArray(parsed.operations) ? parsed.operations : [],
+    reply: (value.reply?.trim() || '(no reply)') + truncationNote,
+    operations,
   }
+}
+
+async function post(
+  body: unknown,
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<{ res: Response; json: any }> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      signal,
+      body: JSON.stringify(body),
+    }
+  )
+  return { res, json: await res.json() }
+}
+
+function rejectedThinkingConfig(json: { error?: { message?: string } } | undefined): boolean {
+  const message = json?.error?.message ?? ''
+  return /thinking/i.test(message)
+}
+
+function outOfRoomMessage(usage: { thoughtsTokenCount?: number } | undefined): string {
+  const thoughts = usage?.thoughtsTokenCount
+  return (
+    'Gemini hit its output limit before finishing, so the answer came back incomplete' +
+    (thoughts ? ` — it spent ${thoughts} tokens thinking first` : '') +
+    `. Raise VITE_GEMINI_PLANNING_MAX_TOKENS (currently ${MAX_OUTPUT_TOKENS}) in .env.local, or set ` +
+    'VITE_GEMINI_THINKING_LEVEL=low so less of the budget goes on thinking. Open Debug for the details.'
+  )
 }

@@ -12,9 +12,20 @@ import {
 } from 'firebase/database'
 import { db } from '../lib/firebase'
 import { currentUser } from './user'
-import type { Item, ItemStack, ContainerType, Container, LogEntry, PendingMove } from '../lib/types'
+import type {
+  Item,
+  ItemStack,
+  ContainerType,
+  Container,
+  LogEntry,
+  PendingMove,
+  AiConversation,
+  AiStoredMessage,
+} from '../lib/types'
 
 const LOG_LIMIT = 500
+// Conversations are far heavier than log lines, so a shorter tail.
+const CONVERSATION_LIMIT = 100
 
 /**
  * Where things belong on a shelf. Seeded from how the warehouse is actually
@@ -49,6 +60,7 @@ interface State {
   containers: Container[] // active only; trashed ones live in `trash`
   trash: Container[]
   logs: LogEntry[] // newest first
+  aiConversations: AiConversation[] // newest first
   /** Shared standing rules the AI agent must respect when placing boxes. */
   placementRules: string
 }
@@ -64,6 +76,7 @@ const state = reactive<State>({
   containers: [],
   trash: [],
   logs: [],
+  aiConversations: [],
   placementRules: '',
 })
 
@@ -108,6 +121,14 @@ export function normalizeLabel(label: string): string {
   return label.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+interface StoredConversation {
+  user?: string
+  title?: string
+  startedAt?: number
+  updatedAt?: number
+  messages?: Record<string, Omit<AiStoredMessage, 'id'> & { role?: string }>
+}
+
 let loadPromise: Promise<void> | null = null
 
 export function load(): Promise<void> {
@@ -116,7 +137,15 @@ export function load(): Promise<void> {
   state.loading = true
   state.error = null
 
-  const pending = new Set(['items', 'itemStacks', 'containerTypes', 'containers', 'logs', 'settings'])
+  const pending = new Set([
+    'items',
+    'itemStacks',
+    'containerTypes',
+    'containers',
+    'logs',
+    'settings',
+    'aiConversations',
+  ])
 
   loadPromise = new Promise((resolve) => {
     function settle(key: string) {
@@ -202,6 +231,43 @@ export function load(): Promise<void> {
       const rules = (val as { placementRules?: string } | null)?.placementRules
       state.placementRules = typeof rules === 'string' ? rules : DEFAULT_PLACEMENT_RULES
     })
+
+    onValue(
+      query(ref(db, 'aiConversations'), limitToLast(CONVERSATION_LIMIT)),
+      (snapshot) => {
+        const val = snapshot.val() as Record<string, StoredConversation> | null
+        state.aiConversations = Object.entries(val ?? {})
+          .map(([id, v]) => ({
+            id,
+            user: v.user ?? 'unknown',
+            title: v.title ?? '(untitled)',
+            startedAt: v.startedAt ?? 0,
+            updatedAt: v.updatedAt ?? v.startedAt ?? 0,
+            // Push keys sort chronologically, so message order comes free.
+            messages: Object.entries(v.messages ?? {}).map(([mid, m]) => ({
+              id: mid,
+              role: (m.role === 'model' ? 'model' : 'user') as 'user' | 'model',
+              text: m.text ?? '',
+              at: m.at ?? 0,
+              // Only on conversations recorded before the field was dropped.
+              planSummary: m.planSummary,
+              proposals: m.proposals,
+              appliedSummaries: m.appliedSummaries,
+              applied: m.applied,
+              proposed: m.proposed,
+              appliedBy: m.appliedBy,
+              appliedAt: m.appliedAt,
+            })),
+          }))
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+        settle('aiConversations')
+      },
+      (err) => {
+        state.error = err.message
+        state.loading = false
+        settle('aiConversations')
+      }
+    )
 
     onValue(
       query(ref(db, 'logs'), limitToLast(LOG_LIMIT)),
@@ -668,7 +734,11 @@ export interface ScannedBoxInput {
 }
 
 /** Compares what Gemini saw on a shelf against what the database believes. */
-export function computeScanDiff(shelfId: string, boxes: ScannedBoxInput[]): ScanDiff {
+export function computeScanDiff(
+  shelfId: string,
+  boxes: ScannedBoxInput[],
+  options: { partialReading?: boolean } = {}
+): ScanDiff {
   const shelf = shelfId.trim()
   const byLabel = new Map<string, Container[]>()
   for (const c of state.containers) {
@@ -744,7 +814,11 @@ export function computeScanDiff(shelfId: string, boxes: ScannedBoxInput[]): Scan
   }
 
   // Anything the database puts on this shelf that the photo didn't show.
-  for (const c of state.containers) {
+  //
+  // Skipped entirely when the model's answer was cut short: "not in the list"
+  // would then mean "the response ran out before reaching it", and trashing
+  // every box past the truncation point would be catastrophic.
+  for (const c of options.partialReading ? [] : state.containers) {
     const onThisShelf = c.location === shelf || c.location.startsWith(`${shelf}-`)
     if (!onThisShelf) continue
     if (seen.has(normalizeLabel(c.label))) continue
@@ -1408,6 +1482,91 @@ export async function applyAgentPlan(operations: AgentOperation[]): Promise<Agen
     await update(rootRef(), updates)
     return { applied, proposed }
   })
+}
+
+// --- AI conversation history -----------------------------------------------
+//
+// Conversations are shared, not per-browser: the value of the history is that
+// anyone can see what was asked of the agent and what it actually changed,
+// without having been the person sitting at the keyboard.
+//
+// These writes are deliberately outside withSaving(). They record what
+// happened rather than change the warehouse, so a failure here must never
+// block a conversation or make the Apply button look busy.
+
+const TITLE_MAX = 90
+
+function conversationTitle(firstMessage: string): string {
+  const flat = firstMessage.trim().replace(/\s+/g, ' ')
+  return flat.length > TITLE_MAX ? `${flat.slice(0, TITLE_MAX - 1)}…` : flat || '(untitled)'
+}
+
+/**
+ * Appends one exchange, creating the conversation on the first turn. Both
+ * messages and the metadata go in a single update so a conversation can never
+ * be left holding a question with no answer.
+ */
+export async function recordAiTurn(input: {
+  conversationId: string | null
+  userText: string
+  modelText: string
+  /** One line per proposed operation, as shown on the review screen. */
+  proposals?: string[]
+}): Promise<{ conversationId: string; modelMessageId: string }> {
+  const now = Date.now()
+  const isNew = !input.conversationId
+  const conversationId = input.conversationId ?? push(ref(db, 'aiConversations')).key
+  if (!conversationId) throw new Error('Could not start a conversation record.')
+
+  const base = `aiConversations/${conversationId}`
+  const userKey = push(ref(db, `${base}/messages`)).key
+  const modelKey = push(ref(db, `${base}/messages`)).key
+  if (!userKey || !modelKey) throw new Error('Could not record the conversation turn.')
+
+  const updates: Record<string, unknown> = {
+    [`${base}/updatedAt`]: now,
+    [`${base}/messages/${userKey}`]: compact({ role: 'user', text: input.userText, at: now }),
+    [`${base}/messages/${modelKey}`]: dropUndefined({
+      role: 'model',
+      text: input.modelText,
+      at: now,
+      proposals: input.proposals?.length ? input.proposals : undefined,
+    }),
+  }
+  if (isNew) {
+    updates[`${base}/user`] = currentUser()
+    updates[`${base}/title`] = conversationTitle(input.userText)
+    updates[`${base}/startedAt`] = now
+  }
+
+  await update(rootRef(), updates)
+  return { conversationId, modelMessageId: modelKey }
+}
+
+/** Marks which of a plan's operations were actually applied, and by whom. */
+export async function recordAiPlanApplied(input: {
+  conversationId: string
+  messageId: string
+  applied: number
+  proposed: number
+  summaries: string[]
+}): Promise<void> {
+  const now = Date.now()
+  const base = `aiConversations/${input.conversationId}`
+  await update(rootRef(), {
+    [`${base}/updatedAt`]: now,
+    [`${base}/messages/${input.messageId}/applied`]: input.applied,
+    [`${base}/messages/${input.messageId}/proposed`]: input.proposed,
+    [`${base}/messages/${input.messageId}/appliedSummaries`]: input.summaries,
+    [`${base}/messages/${input.messageId}/appliedBy`]: currentUser(),
+    [`${base}/messages/${input.messageId}/appliedAt`]: now,
+  })
+}
+
+/** Removes one conversation from the shared history. The changes it made stay
+ *  in the Logs tab - this only forgets the discussion, never the effects. */
+export async function deleteAiConversation(id: string): Promise<void> {
+  await remove(ref(db, `aiConversations/${id}`))
 }
 
 // --- Lookups -------------------------------------------------------------

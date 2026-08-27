@@ -83,6 +83,39 @@ export type IconName =
   | 'arrow-right'
   | 'send'
 
+/**
+ * One turn of an AI Work conversation, as stored. Shared by everyone — the
+ * point is that anybody can see what was asked and what it did, not just
+ * whoever was sitting at the keyboard.
+ */
+export interface AiStoredMessage {
+  id: string
+  role: 'user' | 'model'
+  text: string
+  at: number
+  /** Present on a model turn that proposed a plan. */
+  planSummary?: string
+  /** Human-readable description of each proposed operation. */
+  proposals?: string[]
+  /** Set once somebody applied the plan; absent means it was never run. */
+  appliedSummaries?: string[]
+  applied?: number
+  proposed?: number
+  appliedBy?: string
+  appliedAt?: number
+}
+
+export interface AiConversation {
+  id: string
+  /** Who was talking. Attribution only — there is no real authentication. */
+  user: string
+  /** First thing asked, trimmed, used as the row heading in History. */
+  title: string
+  startedAt: number
+  updatedAt: number
+  messages: AiStoredMessage[]
+}
+
 export interface LogEntry {
   id: string
   at: number // epoch ms

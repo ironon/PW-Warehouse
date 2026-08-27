@@ -314,6 +314,14 @@ async function removeContent(stackId: string) {
     </div>
 
     <div v-if="showNewForm" class="form-card">
+      <NameMatches :result="labelMatches" noun="container" />
+      <NameMatches
+        v-if="trashedMatches.exact.length"
+        :result="{ exact: trashedMatches.exact, similar: [] }"
+        noun="deleted container"
+        :blocking="false"
+      />
+
       <div class="form-grid">
         <div class="field">
           <label>Location</label>
@@ -341,14 +349,6 @@ async function removeContent(stackId: string) {
           <input v-model="newNotes" type="text" />
         </div>
       </div>
-      <NameMatches :result="labelMatches" noun="container" />
-      <NameMatches
-        v-if="trashedMatches.exact.length"
-        :result="{ exact: trashedMatches.exact, similar: [] }"
-        noun="deleted container"
-        :blocking="false"
-      />
-
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
         <button
@@ -365,7 +365,7 @@ async function removeContent(stackId: string) {
       <template v-for="c in filtered" :key="c.id">
         <div class="panel-row" :class="{ expanded: expandedId === c.id }" @click="expand(c.id)">
           <span class="row-main">
-            <span class="location">{{ c.location }}</span>
+            <span class="location address-tag">{{ c.location }}</span>
             <span>{{ c.label || '(no label)' }}</span>
             <span
               v-if="c.containerType"
@@ -457,6 +457,12 @@ async function removeContent(stackId: string) {
 </template>
 
 <style scoped>
+@media (max-width: 860px) {
+  .location {
+    min-width: 0;
+  }
+}
+
 .created-note {
   margin-right: auto;
   align-self: center;
@@ -536,8 +542,9 @@ async function removeContent(stackId: string) {
 
 .chip-loc {
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
   flex: 0 0 auto;
 }
 .chip.active .chip-loc {
@@ -555,12 +562,16 @@ async function removeContent(stackId: string) {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Lets a long label wrap or shrink instead of shoving the address off the
+     row — the address is the part that must always stay visible. */
+  flex-wrap: wrap;
+  min-width: 0;
 }
+/* Appearance comes from the shared .address-tag in style.css; the min-width
+   keeps addresses lined up down the list so the column stays scannable. */
 .location {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-muted);
-  min-width: 80px;
+  min-width: 92px;
+  justify-content: center;
 }
 .type-badge {
   font-size: 11px;

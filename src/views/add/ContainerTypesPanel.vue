@@ -155,6 +155,8 @@ async function applyBulk() {
     </div>
 
     <div v-if="showNewForm" class="form-card">
+      <NameMatches :result="nameMatches" noun="container type" />
+
       <div class="form-grid">
         <div class="field">
           <label>Name</label>
@@ -171,8 +173,6 @@ async function applyBulk() {
           <input v-model="newColor" type="color" />
         </div>
       </div>
-      <NameMatches :result="nameMatches" noun="container type" />
-
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
         <button

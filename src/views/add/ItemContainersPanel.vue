@@ -69,6 +69,9 @@ async function create() {
         location afterwards from the Containers tab, or let the AI Work tab find it a home.
       </p>
 
+      <NameMatches :result="itemMatches" noun="item" />
+      <NameMatches :result="containerMatches" noun="container" />
+
       <div class="form-grid single">
         <div class="field">
           <label>Item Container Name</label>
@@ -85,9 +88,6 @@ async function create() {
           <textarea v-model="notes" rows="2"></textarea>
         </div>
       </div>
-
-      <NameMatches :result="itemMatches" noun="item" />
-      <NameMatches :result="containerMatches" noun="container" />
 
       <div class="form-actions">
         <button

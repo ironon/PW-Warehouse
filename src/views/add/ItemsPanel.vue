@@ -100,6 +100,8 @@ async function remove(id: string) {
     </div>
 
     <div v-if="showNewForm" class="form-card">
+      <NameMatches :result="nameMatches" noun="item" />
+
       <div class="form-grid single">
         <div class="field">
           <label>Name</label>
@@ -116,8 +118,6 @@ async function remove(id: string) {
           <textarea v-model="newNotes" rows="2" />
         </div>
       </div>
-
-      <NameMatches :result="nameMatches" noun="item" />
 
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>

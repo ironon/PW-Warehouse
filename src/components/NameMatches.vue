@@ -47,8 +47,11 @@ const hasExact = computed(() => props.result.exact.length > 0)
 </template>
 
 <style scoped>
+/* Sits ABOVE the name field: on a phone the keyboard covers the bottom of the
+   screen while you type, so anything below the input is unreadable exactly
+   when it matters. */
 .matches {
-  margin-top: 10px;
+  margin-bottom: 14px;
 }
 
 .dupe {

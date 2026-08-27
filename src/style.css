@@ -199,6 +199,29 @@ a {
   justify-content: flex-end;
 }
 
+/* Shelf addresses are the thing people open this app to find, so they read as
+   a distinct token rather than as muted metadata beside the label. Shared by
+   Search and Add so one address looks the same wherever it appears. */
+.address-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.address-tag .icon {
+  color: var(--accent);
+}
+
 .error-banner {
   background: var(--danger-bg);
   color: var(--danger);

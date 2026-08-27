@@ -123,7 +123,7 @@ function contentsOf(container: ReadonlyContainer) {
 
       <section v-for="group in addressGroups" :key="group.address" class="address-group">
         <h2 class="address-heading">
-          <Icon name="pin" :size="14" />
+          <Icon name="pin" :size="15" />
           <span>{{ group.address }}</span>
           <span class="address-count">{{ group.results.length }}</span>
         </h2>
@@ -178,7 +178,7 @@ function contentsOf(container: ReadonlyContainer) {
               {{ containerTypeById(r.container.containerType)?.name || r.container.containerType }}
             </span>
           </div>
-          <span class="location">
+          <span class="location address-tag">
             <Icon name="pin" :size="13" />
             {{ r.container.location }}
           </span>
@@ -249,7 +249,9 @@ function contentsOf(container: ReadonlyContainer) {
 
 .card-header {
   display: flex;
-  align-items: baseline;
+  /* Centred, not baseline: the address is a bordered chip now, and baseline
+     alignment hangs it off the label's text baseline. */
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
@@ -277,13 +279,10 @@ function contentsOf(container: ReadonlyContainer) {
   box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
 }
 
+/* Sizing and colour come from the shared .address-tag in style.css; this only
+   keeps it from being squeezed by a long label beside it. */
 .location {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-family: var(--mono);
+  flex: 0 0 auto;
 }
 
 .address-group {
@@ -293,19 +292,25 @@ function contentsOf(container: ReadonlyContainer) {
 .address-heading {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 13px;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
   font-family: var(--mono);
-  color: var(--text-muted);
+  color: var(--text);
   letter-spacing: 0.02em;
-  padding-bottom: 7px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+  border-bottom: 2px solid var(--border);
+}
+
+.address-heading .icon {
+  color: var(--accent);
 }
 
 .address-count {
   margin-left: auto;
   font-family: var(--sans);
+  font-weight: 600;
   font-size: 11px;
   padding: 1px 7px;
   border-radius: 999px;

@@ -13,9 +13,11 @@ import type { AgentOperation } from '../store/warehouse'
 import type { Container, ContainerType, Item, ItemStack } from './types'
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
-// Planning is a reasoning job, not an OCR job, so it defaults to the stronger
-// model even though the shelf scanner is happy on flash.
-const MODEL = import.meta.env.VITE_GEMINI_PLANNING_MODEL || 'gemini-2.5-pro'
+// Planning is a reasoning job rather than an OCR one, so this is worth
+// pointing at a stronger model than the scanner uses. It is separate from
+// VITE_GEMINI_MODEL for exactly that reason. gemini-3.1-pro-preview is the
+// upgrade to try; the default stays on flash because it is not a preview.
+const MODEL = import.meta.env.VITE_GEMINI_PLANNING_MODEL || 'gemini-3.6-flash'
 
 export class GeminiNotConfiguredError extends Error {
   constructor() {
@@ -250,11 +252,18 @@ export async function askAgent(input: {
     const message = json?.error?.message || res.statusText
     if (res.status === 404) {
       throw new Error(
-        `Gemini model "${MODEL}" was not found or isn't available on this API key. Set VITE_GEMINI_PLANNING_MODEL in .env.local to a model you have access to (gemini-2.5-flash works). (${message})`
+        `Gemini model "${MODEL}" isn't available to this API key. Google retires older model names for newly issued keys, and its own message usually names the replacement: ${message}. Set VITE_GEMINI_PLANNING_MODEL in .env.local and rebuild.`
       )
     }
     if (res.status === 429) {
-      throw new Error(`Gemini rate limit reached for "${MODEL}". Wait a moment and try again. (${message})`)
+      // Two very different things share this status. Saying "try again later"
+      // for a depleted account sends people in circles.
+      const credits = /credit/i.test(message)
+      throw new Error(
+        credits
+          ? `The Gemini project has no credits left, so nothing can run. Top it up at https://ai.studio/projects (Billing). Google's message: ${message}`
+          : `Gemini is rate limiting "${MODEL}". Wait a moment and try again. (${message})`
+      )
     }
     throw new Error(`Gemini request failed: ${message}`)
   }

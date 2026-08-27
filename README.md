@@ -211,10 +211,38 @@ Set `VITE_GEMINI_API_KEY` in `.env.local` (get one at
 Until it's set, the Scan and AI Work tabs explain what's missing instead of
 failing. The same key drives both.
 
-`VITE_GEMINI_MODEL` (shelf scanning) defaults to `gemini-2.5-flash`.
-`VITE_GEMINI_PLANNING_MODEL` (AI Work) defaults to `gemini-2.5-pro`, because
-planning a reorganisation is a reasoning job rather than an OCR one — drop it
-to `gemini-2.5-flash` if you hit rate limits.
+`VITE_GEMINI_MODEL` (shelf scanning) and `VITE_GEMINI_PLANNING_MODEL` (AI
+Work) both default to `gemini-3.6-flash`. They are separate settings because
+planning a reorganisation is a reasoning job rather than an OCR one — point
+the planning one at something stronger (`gemini-3.1-pro-preview`) if plans
+come out sloppy.
+
+### When Gemini isn't working
+
+Run the standalone checker — stdlib only, no venv needed:
+
+```bash
+python scripts/check-gemini.py
+```
+
+It reads `.env.local` and makes the same requests the app makes, printing the
+raw HTTP status and Google's own error text, then what to actually do about
+it. It tells apart the three failures that look identical from the app:
+
+- **429 "prepayment credits are depleted"** — the key is fine, the AI Studio
+  project has no credit. Top it up at
+  [ai.studio/projects](https://ai.studio/projects). No code change helps.
+- **404 "no longer available to new users"** — the model name is retired for
+  keys as new as yours, and Google's message names the replacement. This is
+  what killed `gemini-2.5-flash` and `gemini-2.5-pro` here. **Watch out:
+  ListModels still advertises retired models**, so a model appearing in the
+  listing does not mean it can be used.
+- **401/403** — the key itself is rejected, or the Generative Language API
+  isn't enabled on its project.
+
+If every check passes but the app still fails, it's the browser, not the key:
+`.env.local` is read at **build** time, so `npm run build` and redeploy (or
+restart `npm run dev`) after changing it.
 
 How a scan works:
 

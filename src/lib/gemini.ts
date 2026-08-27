@@ -2,7 +2,10 @@
 // box sits at which position on that shelf.
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
-const MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash'
+// gemini-2.5-* is retired for keys issued after its cutoff: generateContent
+// answers 404 "no longer available to new users" even though ListModels still
+// advertises it. 3.6-flash is the replacement the API itself names.
+const MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.6-flash'
 
 export class GeminiNotConfiguredError extends Error {
   constructor() {
@@ -180,7 +183,17 @@ export async function scanShelf(input: {
     const message = json?.error?.message || res.statusText
     if (res.status === 404) {
       throw new Error(
-        `Gemini model "${MODEL}" was not found. Set VITE_GEMINI_MODEL in .env.local to a vision-capable model you have access to. (${message})`
+        `Gemini model "${MODEL}" isn't available to this API key. Google retires older model names for newly issued keys, and its own message usually names the replacement: ${message}. Set VITE_GEMINI_MODEL in .env.local and rebuild.`
+      )
+    }
+    if (res.status === 429) {
+      // Two very different things share this status. Saying "try again later"
+      // for a depleted account sends people in circles.
+      const credits = /credit/i.test(message)
+      throw new Error(
+        credits
+          ? `The Gemini project has no credits left, so nothing can run. Top it up at https://ai.studio/projects (Billing). Google's message: ${message}`
+          : `Gemini is rate limiting "${MODEL}". Wait a moment and try again. (${message})`
       )
     }
     throw new Error(`Gemini request failed: ${message}`)

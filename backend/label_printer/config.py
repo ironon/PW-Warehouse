@@ -131,15 +131,22 @@ CHUNK_PAUSE_S = float(os.environ.get("CHUNK_PAUSE_S", "0.06"))
 HOST = os.environ.get("LABEL_SERVER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("LABEL_SERVER_PORT", "8765"))
 
-# The frontend may be opened from localhost or from the machine's LAN address,
-# so allow loopback plus the private ranges (RFC1918) on any port. An explicit
-# LABEL_ALLOWED_ORIGINS overrides this with a fixed list.
+# The frontend may be opened from localhost, from the machine's LAN address, or
+# from an intranet name like http://pw-warehouse.local. So: loopback, the
+# private ranges (RFC1918), any *.local mDNS name, and any single-label
+# hostname -- on any port. Single-label and .local names cannot be registered
+# on the public internet, so no external site can forge one of these origins;
+# this stays as tight as a browser can make it without real authentication.
+# An explicit LABEL_ALLOWED_ORIGINS overrides all of it with a fixed list.
 ALLOWED_ORIGIN_REGEX = os.environ.get(
     "LABEL_ALLOWED_ORIGIN_REGEX",
-    r"^http://(localhost|127\.0\.0\.1|"
+    r"^http://("
+    r"localhost|127\.0\.0\.1|"
     r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
     r"192\.168\.\d{1,3}\.\d{1,3}|"
-    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$",
+    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|"
+    r"[A-Za-z0-9][A-Za-z0-9-]*(\.local)?"
+    r")(:\d+)?$",
 )
 _explicit = os.environ.get("LABEL_ALLOWED_ORIGINS", "").strip()
 ALLOWED_ORIGINS = [o.strip() for o in _explicit.split(",") if o.strip()] if _explicit else []

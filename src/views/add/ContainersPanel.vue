@@ -16,6 +16,7 @@ import {
 import { readableTextColor } from '../../lib/color'
 import { printLabel, DEFAULT_COPIES } from '../../lib/labelPrinter'
 import PrintLabelDialog from '../../components/PrintLabelDialog.vue'
+import PendingMoveBadge from '../../components/PendingMoveBadge.vue'
 import {
   recentContainerIds,
   markContainerViewed,
@@ -306,6 +307,8 @@ async function removeContent(stackId: string) {
           <span class="muted">{{ c.id }}</span>
         </div>
 
+        <PendingMoveBadge v-if="c.pendingMove" :container-id="c.id" class="row-pending" @click.stop />
+
         <div v-if="expandedId === c.id" class="form-card" @click.stop>
           <div class="form-grid">
             <div class="field">
@@ -380,6 +383,11 @@ async function removeContent(stackId: string) {
 </template>
 
 <style scoped>
+/* Pulled up under its row so it reads as part of it, not as a separate item. */
+.row-pending {
+  margin: -2px 0 8px;
+}
+
 .muted {
   color: var(--text-muted);
   font-size: 12px;

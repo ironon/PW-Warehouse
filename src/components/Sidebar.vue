@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { warehouse } from '../store/warehouse'
+import { warehouse, pendingMoveCount } from '../store/warehouse'
 import { username } from '../store/user'
 import { sidebarCollapsed, isMobile, toggleSidebar, closeDrawer } from '../store/ui'
 import Icon from './Icon.vue'
@@ -15,6 +15,7 @@ const tabs: { id: Tab; icon: IconName; label: string }[] = [
   { id: 'search', icon: 'search', label: 'Search' },
   { id: 'add', icon: 'plus', label: 'Add' },
   { id: 'scan', icon: 'camera', label: 'Scan Shelf' },
+  { id: 'ai', icon: 'sparkles', label: 'AI Work' },
   { id: 'print', icon: 'printer', label: 'Print Label' },
   { id: 'logs', icon: 'history', label: 'Logs' },
   { id: 'trash', icon: 'trash', label: 'Deleted' },
@@ -22,6 +23,9 @@ const tabs: { id: Tab; icon: IconName; label: string }[] = [
 
 // The icon rail only applies on desktop; the mobile drawer is always full width.
 const rail = computed(() => sidebarCollapsed.value && !isMobile.value)
+
+/** Boxes somebody still has to carry. Worth seeing from every tab. */
+const pendingCount = computed(() => pendingMoveCount())
 
 const initial = computed(() => (username.value.trim()[0] ?? '?').toUpperCase())
 
@@ -56,6 +60,9 @@ const activeTab = computed(() => props.active)
         <span v-if="!rail" class="text">{{ tab.label }}</span>
         <span v-if="tab.id === 'trash' && warehouse.trash.length" class="badge" :class="{ dot: rail }">
           {{ rail ? '' : warehouse.trash.length }}
+        </span>
+        <span v-if="tab.id === 'ai' && pendingCount" class="badge" :class="{ dot: rail }">
+          {{ rail ? '' : pendingCount }}
         </span>
       </button>
     </nav>

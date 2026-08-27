@@ -58,8 +58,10 @@ function buildPrompt(input: {
   knownLevels: string[]
   knownLabels: string[]
   containerTypeNames: string[]
+  extraInstructions?: string
 }): string {
   const { shelfId, knownLevels, knownLabels, containerTypeNames } = input
+  const extra = (input.extraInstructions ?? '').trim()
 
   return `You are reading a photograph of a single warehouse shelving unit in order to record where each labelled box currently sits.
 
@@ -101,7 +103,20 @@ If you cannot tell from the photo, or none fit, use an empty string.
 
 Mark confidence "high" only when both the label text and the position are unambiguous. Use "medium" when the position is clear but the text is partly obscured, and "low" when you are guessing.
 
-Return every box you can confidently place on shelf ${shelfId}.`
+Return every box you can confidently place on shelf ${shelfId}.${
+    extra
+      ? `
+
+## Extra instructions for this photo
+
+The person who took this photo added the following. It describes this
+particular shelf or photo, so it takes precedence over the general guidance
+above wherever the two disagree - except for the scoping rule, which always
+holds: never report a box that is not on ${shelfId}.
+
+${extra}`
+      : ''
+  }`
 }
 
 const RESPONSE_SCHEMA = {
@@ -132,6 +147,8 @@ export async function scanShelf(input: {
   knownLevels: string[]
   knownLabels: string[]
   containerTypeNames: string[]
+  /** Free-text notes from whoever took the photo, appended to the prompt. */
+  extraInstructions?: string
 }): Promise<ScanResponse> {
   if (!API_KEY) throw new GeminiNotConfiguredError()
 

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { warehouse, itemById, containerTypeById, itemStackById } from '../store/warehouse'
 import { readableTextColor } from '../lib/color'
 import Icon from '../components/Icon.vue'
+import PendingMoveBadge from '../components/PendingMoveBadge.vue'
 
 const query = ref('')
 
@@ -144,6 +145,8 @@ function contentsOf(container: ReadonlyContainer) {
             </div>
           </div>
 
+          <PendingMoveBadge v-if="r.container.pendingMove" :container-id="r.container.id" />
+
           <p v-if="r.container.notes" class="notes">{{ r.container.notes }}</p>
 
           <div v-if="contentsOf(r.container).length" class="contents">
@@ -180,6 +183,8 @@ function contentsOf(container: ReadonlyContainer) {
             {{ r.container.location }}
           </span>
         </div>
+
+        <PendingMoveBadge v-if="r.container.pendingMove" :container-id="r.container.id" />
 
         <p v-if="r.container.notes" class="notes">{{ r.container.notes }}</p>
 

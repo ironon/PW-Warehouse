@@ -10,6 +10,10 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
+    // Vite rejects requests whose Host header it doesn't recognise (DNS-rebinding
+    // protection). The app is reached as http://pw-warehouse.local on this
+    // network, so that name and any other intranet name must be allowed through.
+    allowedHosts: ['pw-warehouse.local', '.local', 'pw-warehouse'],
     watch: {
       // None of these can trigger HMR, and watching them is actively harmful:
       // a file being written or locked (an archive mid-zip, a credential file
@@ -28,5 +32,6 @@ export default defineConfig({
   preview: {
     host: true,
     port: 4173,
+    allowedHosts: ['pw-warehouse.local', '.local', 'pw-warehouse'],
   },
 })

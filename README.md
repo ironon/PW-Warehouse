@@ -22,6 +22,10 @@ out of scope" below.
   "assign every container on shelf X to type Y" tool.
 - **Scan Shelf** photographs one shelf and uses Gemini to read the labels
   and work out where each box sits — see below.
+- **AI Work** is a conversation with an agent that can change the inventory:
+  reorganise a shelf, bulk-add items, find containers worth merging. Every
+  plan goes through a review screen, and anything that means physically
+  carrying a box becomes a *proposal* rather than a change — see below.
 - **Logs** is an append-only record of every database change, with who made
   it and when.
 - **Deleted** is a recoverable trash can for containers.
@@ -45,6 +49,67 @@ out of scope" below.
   `{ id: true }` maps rather than arrays — the RTDB-idiomatic way to
   represent a set, and what makes single-item add/remove an atomic
   single-key write instead of a read-modify-write of a whole list.
+
+## AI Work and pending moves
+
+Set `VITE_GEMINI_API_KEY` (below) and the **AI Work** tab opens a chat with an
+agent that has the whole inventory in front of it — every container, address,
+type and its contents. Ask it for changes in plain English:
+
+> take all the screws in a yellow or blue container under BR1 and organise
+> them so metric is on the left and imperial on the right; keep metric in blue
+> containers, imperial in anything else
+
+It replies with a plan. Every operation is a checkbox; nothing is written
+until you hit Apply. It asks clarifying questions rather than guessing, and
+you can keep talking to refine a plan before applying it.
+
+### Nothing moves a box on its own
+
+Bookkeeping changes (labels, types, notes, item counts, new containers) are
+written straight away. Anything that requires a person to physically pick a
+box up — a **move**, a **swap**, or a **merge** — is only *proposed*:
+
+- The container keeps reporting the address it is actually at. That address is
+  what Search shows, because that is where the box really is.
+- Alongside it, everywhere the container appears (Search, Add, AI Work), you
+  get `SL4-L-A → SL3-M-B` with a green ✓ and a red ✗. ✓ records that the work
+  was done and commits the new address; ✗ throws the proposal away.
+- A **swap** is two halves of one job, so its two containers accept and deny
+  together — carrying box A into box B's slot without moving B just puts two
+  boxes in one place.
+- A **shelf scan can tick a proposal off for you**: photograph the shelf, and
+  if Gemini finds the box at exactly the address that was proposed, the review
+  screen offers it as a "Confirm" row. A box with an outstanding proposal is
+  also never proposed for the trash when a photo doesn't find it — it is
+  *expected* to be leaving.
+- The AI Work tab lists everything outstanding, with a "Reject all" for when a
+  whole plan turns out to be wrong after the fact.
+
+### Placement rules
+
+The agent works to a set of standing rules — middle levels for tools and
+equipment that get used often, top for customer spare parts and cardboard
+boxes, bottom for things that matter but are needed less often; shelves are
+full so prefer swaps; every move is labour, so don't move things for no
+reason. These live in the database (`settings/placementRules`), not in code,
+and are editable from **AI Work → Placement rules**, because they are a
+business rule that changes without a rebuild. The seed text is
+`DEFAULT_PLACEMENT_RULES` in [src/store/warehouse.ts](src/store/warehouse.ts).
+
+### What the agent may do
+
+`container.move`, `container.swap`, `container.merge`, `container.create`,
+`container.update`, `container.trash`, `item.create`, `itemstack.add`,
+`itemstack.update`, `itemstack.remove`, `containertype.create`. It cannot
+purge anything permanently, and it cannot change an address through an edit —
+`container.update` rejects a location outright, so relocating always goes
+through the confirmation path. Every applied plan lands as one atomic
+multi-path write, so a reorganisation never half-happens.
+
+An unrecognised or impossible operation (a container id that no longer exists,
+an invalid address, a duplicate item name) shows on the review screen as
+"can't apply" with the reason, rather than failing at write time.
 
 ## Why Realtime Database over Firestore
 
@@ -71,26 +136,55 @@ For label printing, also start the local print service — double-click
 `backend\start-printer-server.bat` and leave it running. The app works fine
 without it; only printing is unavailable.
 
+### Deploying to pw-warehouse.local
+
+The app is served on this network as `http://pw-warehouse.local` (port 80) from
+a built bundle, so deploying a change is:
+
+```bash
+npm run build          # writes dist/
+```
+
+then point the web server on port 80 at `dist/`. It is a plain static
+directory — no server-side rendering, no API to proxy. The only routing
+requirement is that unknown paths fall back to `index.html`.
+
+Two things depend on that hostname and are already configured for it:
+
+- **The print service** accepts requests from any `*.local` name, any
+  single-label intranet name, and any RFC1918 address, on any port. Neither
+  kind of name can be registered on the public internet, so no outside site
+  can forge one — see `ALLOWED_ORIGIN_REGEX` in
+  [backend/label_printer/config.py](backend/label_printer/config.py).
+- **The app finds the print service** by taking the hostname the page was
+  served from and adding port 8765, always over plain `http`. So
+  `http://pw-warehouse.local` calls `http://pw-warehouse.local:8765`, and
+  nothing needs reconfiguring when the machine's IP changes. It deliberately
+  does not inherit the page's protocol: behind a TLS proxy every print would
+  silently die on mixed-content blocking instead.
+
+The print service must run on the same machine that serves the site, since
+that is the machine with the printer on USB. Start it with
+`backend\start-printer-server.bat` and leave it running.
+
+`npm run dev` also accepts the `pw-warehouse.local` hostname (Vite otherwise
+rejects unrecognised `Host` headers as DNS-rebinding protection) — see
+`allowedHosts` in [vite.config.ts](vite.config.ts).
+
+### Firewall
+
+**Once only:** right-click `allow-lan-access.bat` → *Run as administrator*. It
+opens ports 80, 5173 and 8765 to local-subnet addresses. Without it Windows
+Firewall silently drops inbound connections and a phone just hangs.
+
 ### Using it from a phone
 
-Both servers bind to all network interfaces, so any device on the same
-network can use the app — including printing, since the print request is sent
-to the laptop and the laptop drives the USB printer.
+Any device on the same network can use the app at `http://pw-warehouse.local`,
+printing included: the print request goes to the host machine, and that
+machine drives the USB printer.
 
-1. **Once only:** right-click `allow-lan-access.bat` → *Run as administrator*.
-   This opens ports 5173 and 8765 to local-subnet addresses. Without it
-   Windows Firewall silently drops the connection and the phone just hangs.
-2. Start both servers on the laptop (`npm run dev`, plus
-   `backend\start-printer-server.bat`).
-3. On the phone, open `http://<laptop-ip>:5173` — `npm run dev` prints the
-   address on its "Network:" line.
-
-The app works out the print service's address from whatever host served the
-page, so nothing needs configuring when the laptop's IP changes. Hardcoding
-`127.0.0.1` would make the phone try to reach *itself*.
-
-The laptop must stay awake and on the same network, and the printer stays
-plugged into it over USB.
+The host machine must stay awake and on the same network, and the printer
+stays plugged into it over USB.
 
 `.env.local` (gitignored, already populated) holds the Firebase Web App
 config (`VITE_FIREBASE_*`) — these are **not secrets**; Firebase's own docs
@@ -113,27 +207,38 @@ Sign-In restricted to `@pixw.us`) and tighten the rules to require
 ## Shelf scanning (Gemini)
 
 Set `VITE_GEMINI_API_KEY` in `.env.local` (get one at
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey)) and restart
-the dev server. Until it's set, the Scan tab explains what's missing instead
-of failing. `VITE_GEMINI_MODEL` defaults to `gemini-2.5-flash`.
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey)) and rebuild.
+Until it's set, the Scan and AI Work tabs explain what's missing instead of
+failing. The same key drives both.
+
+`VITE_GEMINI_MODEL` (shelf scanning) defaults to `gemini-2.5-flash`.
+`VITE_GEMINI_PLANNING_MODEL` (AI Work) defaults to `gemini-2.5-pro`, because
+planning a reorganisation is a reasoning job rather than an OCR one — drop it
+to `gemini-2.5-flash` if you hit rate limits.
 
 How a scan works:
 
 1. Pick the shelf you're photographing from the dropdown. This is what tells
    Gemini to ignore neighbouring shelving units that get caught at the edge
    of the frame.
-2. Take one photo of the whole unit. It's downscaled to 1600px in the browser
+2. Optionally add a note for this photo — "the boxes on the floor aren't
+   shelved yet, ignore them", "the third tier is being rebuilt". It's appended
+   to the prompt and takes precedence over the general guidance, except for
+   the scoping rule (never report a box that isn't on this shelf), which always
+   wins. It's remembered for your next scan, since the same caveat usually
+   applies all the way down an aisle.
+3. Take one photo of the whole unit. It's downscaled to 1600px in the browser
    before upload and **never stored anywhere** — it goes to Gemini in memory
    and is discarded.
-3. Gemini returns each box's label, level, column, and (from its appearance
+4. Gemini returns each box's label, level, column, and (from its appearance
    in the photo) its container type. The prompt spells out the addressing
    scheme, including that `M1` is the tier directly above `L` and that plain
    `M` means the shelf has only one middle tier.
-4. You get a **review screen** listing every proposed change — moves, newly
+5. You get a **review screen** listing every proposed change — moves, newly
    discovered boxes, and boxes the photo didn't show — with checkboxes.
    Nothing is written until you hit Apply. Low/medium-confidence readings are
    marked so you can spot them.
-5. Applying writes every change and its log entries in a single atomic
+6. Applying writes every change and its log entries in a single atomic
    Firebase update.
 
 Details worth knowing:
@@ -150,6 +255,11 @@ Details worth knowing:
   missed because it's obscured or blurry, not because it's gone.
 - Boxes recorded on a *different* shelf that show up in this photo are moved
   here, which is the point of the feature.
+- **A scan settles pending moves.** If a box is found at exactly the address
+  somebody proposed moving it to, the review screen offers a "Confirm" row that
+  commits the move. Conversely a box with an outstanding proposal is never
+  proposed for the trash when the photo doesn't find it — it is supposed to be
+  leaving. See "AI Work and pending moves" above.
 
 ## Pictures are out of scope
 

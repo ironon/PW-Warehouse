@@ -12,8 +12,10 @@ const PRINTER_PORT = import.meta.env.VITE_LABEL_PRINTER_PORT || '8765'
 
 function defaultBase(): string {
   if (typeof window === 'undefined') return `http://127.0.0.1:${PRINTER_PORT}`
-  const { protocol, hostname } = window.location
-  return `${protocol}//${hostname}:${PRINTER_PORT}`
+  // Always http, never inherited from the page: the print service speaks plain
+  // HTTP only, so a page served over https (or the intranet name behind a TLS
+  // proxy) would silently fail every print on mixed-content blocking.
+  return `http://${window.location.hostname}:${PRINTER_PORT}`
 }
 
 const BASE = (import.meta.env.VITE_LABEL_PRINTER_URL || defaultBase()).replace(/\/$/, '')

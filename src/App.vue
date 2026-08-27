@@ -9,6 +9,7 @@ import Icon from './components/Icon.vue'
 import SearchView from './views/SearchView.vue'
 import AddView from './views/AddView.vue'
 import ScanView from './views/ScanView.vue'
+import AiWorkView from './views/AiWorkView.vue'
 import PrintView from './views/PrintView.vue'
 import LogsView from './views/LogsView.vue'
 import TrashView from './views/TrashView.vue'
@@ -20,6 +21,7 @@ const TITLES: Record<Tab, string> = {
   search: 'Search',
   add: 'Add',
   scan: 'Scan Shelf',
+  ai: 'AI Work',
   print: 'Print Label',
   logs: 'Logs',
   trash: 'Deleted Containers',
@@ -53,6 +55,7 @@ onMounted(() => {
       <SearchView v-if="tab === 'search'" />
       <AddView v-else-if="tab === 'add'" />
       <ScanView v-else-if="tab === 'scan'" />
+      <AiWorkView v-else-if="tab === 'ai'" />
       <PrintView v-else-if="tab === 'print'" />
       <LogsView v-else-if="tab === 'logs'" />
       <TrashView v-else />

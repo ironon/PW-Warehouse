@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   warehouse,
   knownShelves,
@@ -13,8 +13,20 @@ import { scanShelf, fileToScaledJpegBase64, isGeminiConfigured, GeminiNotConfigu
 
 type Phase = 'setup' | 'scanning' | 'review' | 'done'
 
+const EXTRA_KEY = 'pw-warehouse.scanExtraInstructions'
+
 const phase = ref<Phase>('setup')
 const shelfId = ref('')
+// Remembered across scans: whoever is walking the aisle usually has the same
+// caveat for every shelf that day ("ignore the pallet on the floor").
+const extraInstructions = ref(localStorage.getItem(EXTRA_KEY) ?? '')
+
+watch(extraInstructions, (value) => {
+  const trimmed = value.trim()
+  if (trimmed) localStorage.setItem(EXTRA_KEY, trimmed)
+  else localStorage.removeItem(EXTRA_KEY)
+})
+
 const customShelf = ref('')
 const file = ref<File | null>(null)
 const previewUrl = ref('')
@@ -57,6 +69,7 @@ async function runScan() {
       knownLevels: levelsForShelf(effectiveShelf.value),
       knownLabels: warehouse.containers.map((c) => c.label).filter(Boolean),
       containerTypeNames: warehouse.containerTypes.map((t) => t.name).filter(Boolean),
+      extraInstructions: extraInstructions.value,
     })
     geminiNotes.value = result.notes
     const diff = computeScanDiff(effectiveShelf.value, result.boxes)
@@ -106,6 +119,7 @@ function setAll(value: boolean) {
 function kindLabel(kind: ScanChange['kind']): string {
   if (kind === 'move') return 'Move'
   if (kind === 'create') return 'New'
+  if (kind === 'confirmMove') return 'Confirm'
   return 'To trash'
 }
 </script>
@@ -146,6 +160,19 @@ function kindLabel(kind: ScanChange['kind']): string {
             <label>Shelf ID</label>
             <input v-model="customShelf" type="text" placeholder="e.g. SR4" />
           </div>
+        </div>
+
+        <div class="field">
+          <label>Anything else Gemini should know <span class="optional">(optional)</span></label>
+          <textarea
+            v-model="extraInstructions"
+            rows="2"
+            placeholder="e.g. the two boxes on the floor aren't shelved yet — ignore them"
+          ></textarea>
+          <p class="hint">
+            Added to the prompt for this photo. Useful for one-off oddities: obscured labels, a tier that's being
+            rebuilt, boxes stacked on the floor. It's remembered for your next scan.
+          </p>
         </div>
 
         <p v-if="effectiveShelf" class="hint">
@@ -214,6 +241,9 @@ function kindLabel(kind: ScanChange['kind']): string {
                 <template v-else-if="row.change.kind === 'create'">
                   at <strong>{{ row.change.toLocation }}</strong>
                   <template v-if="row.change.containerTypeName"> · {{ row.change.containerTypeName }}</template>
+                </template>
+                <template v-else-if="row.change.kind === 'confirmMove'">
+                  proposed move done: {{ row.change.fromLocation }} → <strong>{{ row.change.toLocation }}</strong>
                 </template>
                 <template v-else> not seen at {{ row.change.fromLocation }} </template>
               </span>
@@ -369,6 +399,15 @@ function kindLabel(kind: ScanChange['kind']): string {
 .kind.trash {
   background: var(--danger-bg);
   color: var(--danger);
+}
+.kind.confirmMove {
+  background: rgba(31, 146, 84, 0.15);
+  color: var(--success);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .change-label {

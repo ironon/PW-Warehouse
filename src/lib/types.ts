@@ -16,6 +16,37 @@ export interface ContainerType {
   color: string // hex
 }
 
+/**
+ * Physical work the AI agent has proposed but nobody has done yet.
+ *
+ * It lives on the container rather than in a separate collection so every
+ * reader that already has a Container has the proposal too, with no join --
+ * and so `location` keeps meaning "where the box actually is right now".
+ * The proposed destination only becomes the location when someone confirms
+ * the box was really carried there.
+ */
+export interface PendingMove {
+  /** 'move' relocates the box; 'merge' empties it into another container. */
+  kind: 'move' | 'merge'
+  /** Where the box sat when this was proposed, to detect a stale proposal. */
+  from: string
+  /** Destination address. For a merge, the target container's location. */
+  to: string
+  /** Why the agent wants it done, shown to whoever has to do the lifting.
+   *  Optional because a proposal can be recorded without one. */
+  reason?: string
+  at: number // epoch ms
+  by: string
+  /**
+   * The other half of a swap. Shelves are full, so the agent mostly trades
+   * two boxes rather than moving one into thin air; both halves are accepted
+   * or denied together because half a swap leaves two boxes in one slot.
+   */
+  swapWith?: string // Container id
+  /** For kind === 'merge': the container that receives this one's contents. */
+  mergeInto?: string // Container id
+}
+
 export interface Container {
   id: string
   location: string
@@ -29,9 +60,11 @@ export interface Container {
   deleted?: boolean
   deletedAt?: number
   deletedBy?: string
+  /** Unconfirmed physical work; see PendingMove. */
+  pendingMove?: PendingMove
 }
 
-export type Tab = 'search' | 'add' | 'scan' | 'print' | 'logs' | 'trash'
+export type Tab = 'search' | 'add' | 'scan' | 'ai' | 'print' | 'logs' | 'trash'
 
 export type IconName =
   | 'search'
@@ -45,6 +78,10 @@ export type IconName =
   | 'close'
   | 'chevron-left'
   | 'chevron-right'
+  | 'sparkles'
+  | 'check'
+  | 'arrow-right'
+  | 'send'
 
 export interface LogEntry {
   id: string

@@ -2,10 +2,11 @@
 REM Lets phones and tablets on the same network reach PW-Warehouse.
 REM RIGHT-CLICK THIS FILE AND CHOOSE "Run as administrator".
 REM
-REM Opens two inbound TCP ports on this machine:
-REM   5173 - the web app
+REM Opens three inbound TCP ports on this machine:
+REM   80   - the built app served at http://pw-warehouse.local
+REM   5173 - the Vite dev server, for development
 REM   8765 - the label printing service
-REM Both are restricted to private/local network addresses only.
+REM All three are restricted to private/local network addresses only.
 
 net session >nul 2>&1
 if %errorLevel% neq 0 (
@@ -19,8 +20,15 @@ if %errorLevel% neq 0 (
 
 echo Adding firewall rules...
 
+netsh advfirewall firewall delete rule name="PW-Warehouse site (80)" >nul 2>&1
 netsh advfirewall firewall delete rule name="PW-Warehouse app (5173)" >nul 2>&1
 netsh advfirewall firewall delete rule name="PW-Warehouse label printer (8765)" >nul 2>&1
+
+netsh advfirewall firewall add rule ^
+  name="PW-Warehouse site (80)" ^
+  dir=in action=allow protocol=TCP localport=80 ^
+  remoteip=LocalSubnet profile=any
+if %errorLevel% neq 0 goto :failed
 
 netsh advfirewall firewall add rule ^
   name="PW-Warehouse app (5173)" ^
@@ -37,8 +45,9 @@ if %errorLevel% neq 0 goto :failed
 echo.
 echo Done. Devices on your local network can now reach this machine.
 echo.
-echo Find this machine's address with:  ipconfig
-echo Then open on your phone:           http://THAT-ADDRESS:5173
+echo On this network the app is at:     http://pw-warehouse.local
+echo Or find this machine's address:    ipconfig
+echo and open:                          http://THAT-ADDRESS
 echo.
 pause
 exit /b 0

@@ -8,6 +8,8 @@ import {
   containersMatchingLocationPrefix,
   bulkSetContainerType,
 } from '../../store/warehouse'
+import { matchNames } from '../../lib/similar'
+import NameMatches from '../../components/NameMatches.vue'
 
 const query = ref('')
 const filtered = computed(() =>
@@ -23,6 +25,17 @@ const error = ref('')
 const createdNote = ref('')
 const newNameInput = useTemplateRef<HTMLInputElement>('newNameInput')
 
+// Container types are referenced by name in the AI Work tab and by the shelf
+// scanner's appearance matching, so two with the same name is worse than
+// merely untidy.
+const nameMatches = computed(() =>
+  matchNames(
+    newName.value,
+    warehouse.containerTypes.map((t) => ({ id: t.id, name: t.name }))
+  )
+)
+const isDuplicate = computed(() => nameMatches.value.exact.length > 0)
+
 function toggleNewForm() {
   showNewForm.value = !showNewForm.value
   createdNote.value = ''
@@ -34,7 +47,7 @@ const editColor = ref('#2f6fed')
 
 async function create() {
   const name = newName.value.trim()
-  if (!name || warehouse.saving) return
+  if (!name || warehouse.saving || isDuplicate.value) return
   error.value = ''
   try {
     await addContainerType({ name, color: newColor.value })
@@ -158,9 +171,15 @@ async function applyBulk() {
           <input v-model="newColor" type="color" />
         </div>
       </div>
+      <NameMatches :result="nameMatches" noun="container type" />
+
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
-        <button class="btn btn-primary" :disabled="!newName.trim() || warehouse.saving" @click="create">
+        <button
+          class="btn btn-primary"
+          :disabled="!newName.trim() || warehouse.saving || isDuplicate"
+          @click="create"
+        >
           Create type
         </button>
       </div>

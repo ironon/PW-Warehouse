@@ -24,7 +24,9 @@ out of scope" below.
   Item and the Container together, in a single atomic write, with the
   container labelled the same and parked at location `Unknown`. Every "new"
   form in Add stays open after a create and clears itself, so a run of
-  additions is one continuous task rather than a click per entry.
+  additions is one continuous task rather than a click per entry, and every
+  one of them checks the name against what already exists as you type — see
+  below.
 - **Scan Shelf** photographs one shelf and uses Gemini to read the labels
   and work out where each box sits — see below.
 - **AI Work** is a conversation with an agent that can change the inventory:
@@ -115,6 +117,33 @@ multi-path write, so a reorganisation never half-happens.
 An unrecognised or impossible operation (a container id that no longer exists,
 an invalid address, a duplicate item name) shows on the review screen as
 "can't apply" with the reason, rather than failing at write time.
+
+## Duplicate checking on the Add forms
+
+Every "new" form — Item, Container, Item Container, Container Type — matches
+what you're typing against what already exists, live. See
+[src/lib/similar.ts](src/lib/similar.ts).
+
+- **An exact match blocks creation.** The button disables and says which
+  record it clashes with. Comparison is case- and whitespace-insensitive,
+  using the same rule the shelf scanner uses to match labels — so what counts
+  as a duplicate here is exactly what counts as one there.
+- **Near matches are listed while you type**, so you can stop before you
+  finish. Matching is prefix-first (`M5 scr` finds `M5 screws`), then
+  containment, then trigram overlap for typos (`cabel ties` finds
+  `Cable ties`). One character shows nothing — it would drag in half the
+  warehouse.
+- **Container labels are the important case.** Two containers sharing a label
+  is a real fault, not untidiness: a shelf scan can't tell them apart and
+  skips both as ambiguous. Creating a duplicate label is blocked outright.
+- **A matching container in Deleted is a notice, not a block** — it isn't in
+  the scanner's index, but it usually means the box should be restored rather
+  than recreated.
+- **Item Containers check both collections**, since one entry writes an Item
+  and a Container.
+
+This covers creation only. Renaming an existing record into a collision is
+still possible; the Scan tab warns about any duplicate labels it finds.
 
 ## Why Realtime Database over Firestore
 

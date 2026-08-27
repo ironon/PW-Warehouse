@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useTemplateRef } from 'vue'
 import { warehouse, addItem, updateItem, deleteItem } from '../../store/warehouse'
+import { matchNames } from '../../lib/similar'
+import NameMatches from '../../components/NameMatches.vue'
 
 const query = ref('')
 const filtered = computed(() =>
@@ -16,13 +18,23 @@ const error = ref('')
 const createdNote = ref('')
 const newNameInput = useTemplateRef<HTMLInputElement>('newNameInput')
 
+// Checked live while typing, so a duplicate is caught before the click rather
+// than after. An exact match blocks creation outright.
+const nameMatches = computed(() =>
+  matchNames(
+    newName.value,
+    warehouse.items.map((i) => ({ id: i.id, name: i.name }))
+  )
+)
+const isDuplicate = computed(() => nameMatches.value.exact.length > 0)
+
 const expandedId = ref<string | null>(null)
 const editName = ref('')
 const editNotes = ref('')
 
 async function createItem() {
   const name = newName.value.trim()
-  if (!name || warehouse.saving) return
+  if (!name || warehouse.saving || isDuplicate.value) return
   error.value = ''
   try {
     await addItem({ name, notes: newNotes.value.trim() })
@@ -104,9 +116,16 @@ async function remove(id: string) {
           <textarea v-model="newNotes" rows="2" />
         </div>
       </div>
+
+      <NameMatches :result="nameMatches" noun="item" />
+
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
-        <button class="btn btn-primary" :disabled="!newName.trim() || warehouse.saving" @click="createItem">
+        <button
+          class="btn btn-primary"
+          :disabled="!newName.trim() || warehouse.saving || isDuplicate"
+          @click="createItem"
+        >
           Create item
         </button>
       </div>

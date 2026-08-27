@@ -17,6 +17,8 @@ import { readableTextColor } from '../../lib/color'
 import { printLabel, DEFAULT_COPIES } from '../../lib/labelPrinter'
 import PrintLabelDialog from '../../components/PrintLabelDialog.vue'
 import PendingMoveBadge from '../../components/PendingMoveBadge.vue'
+import { matchNames } from '../../lib/similar'
+import NameMatches from '../../components/NameMatches.vue'
 import {
   recentContainerIds,
   markContainerViewed,
@@ -79,13 +81,34 @@ const newNotes = ref('')
 const createdNote = ref('')
 const newLabelInput = useTemplateRef<HTMLInputElement>('newLabelInput')
 
+// A container is identified by its label, and two containers sharing one is a
+// real problem, not a cosmetic one: a shelf scan can't tell them apart and
+// skips both. So a duplicate label blocks creation.
+const labelMatches = computed(() =>
+  matchNames(
+    newLabel.value,
+    warehouse.containers.map((c) => ({ id: c.id, name: c.label, detail: c.location }))
+  )
+)
+const isDuplicateLabel = computed(() => labelMatches.value.exact.length > 0)
+
+// A trashed container with the same label doesn't block anything - it isn't in
+// the scanner's index - but it usually means the box should be restored rather
+// than recreated from scratch.
+const trashedMatches = computed(() =>
+  matchNames(
+    newLabel.value,
+    warehouse.trash.map((c) => ({ id: c.id, name: c.label, detail: 'in Deleted' }))
+  )
+)
+
 function toggleNewForm() {
   showNewForm.value = !showNewForm.value
   createdNote.value = ''
 }
 
 async function createContainer() {
-  if (!newLocation.value.trim() || warehouse.saving) return
+  if (!newLocation.value.trim() || warehouse.saving || isDuplicateLabel.value) return
   error.value = ''
   try {
     const c = await addContainer({
@@ -318,9 +341,21 @@ async function removeContent(stackId: string) {
           <input v-model="newNotes" type="text" />
         </div>
       </div>
+      <NameMatches :result="labelMatches" noun="container" />
+      <NameMatches
+        v-if="trashedMatches.exact.length"
+        :result="{ exact: trashedMatches.exact, similar: [] }"
+        noun="deleted container"
+        :blocking="false"
+      />
+
       <div class="form-actions">
         <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
-        <button class="btn btn-primary" :disabled="!newLocation.trim() || warehouse.saving" @click="createContainer">
+        <button
+          class="btn btn-primary"
+          :disabled="!newLocation.trim() || warehouse.saving || isDuplicateLabel"
+          @click="createContainer"
+        >
           Create container
         </button>
       </div>

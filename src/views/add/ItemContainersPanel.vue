@@ -2,8 +2,10 @@
 // Some things in the warehouse ARE their own box — a spool, a case, a machine
 // on a pallet. Recording those means the same name typed into two places, so
 // this does both at once.
-import { nextTick, ref, useTemplateRef } from 'vue'
+import { computed, nextTick, ref, useTemplateRef } from 'vue'
 import { addItemContainer, UNKNOWN_LOCATION, warehouse } from '../../store/warehouse'
+import { matchNames } from '../../lib/similar'
+import NameMatches from '../../components/NameMatches.vue'
 
 const name = ref('')
 const notes = ref('')
@@ -14,9 +16,28 @@ const nameInput = useTemplateRef<HTMLInputElement>('nameInput')
  *  on success, so this is what tells you the click actually did something. */
 const created = ref<{ name: string; itemId: string; containerId: string }[]>([])
 
+// This writes into both collections, so it has to be clear of both. Checking
+// only one would let it create an item that duplicates an existing container's
+// label, or the other way round.
+const itemMatches = computed(() =>
+  matchNames(
+    name.value,
+    warehouse.items.map((i) => ({ id: i.id, name: i.name }))
+  )
+)
+const containerMatches = computed(() =>
+  matchNames(
+    name.value,
+    warehouse.containers.map((c) => ({ id: c.id, name: c.label, detail: c.location }))
+  )
+)
+const isDuplicate = computed(
+  () => itemMatches.value.exact.length > 0 || containerMatches.value.exact.length > 0
+)
+
 async function create() {
   const trimmed = name.value.trim()
-  if (!trimmed || warehouse.saving) return
+  if (!trimmed || warehouse.saving || isDuplicate.value) return
   error.value = ''
   try {
     const result = await addItemContainer({ name: trimmed, notes: notes.value })
@@ -65,8 +86,15 @@ async function create() {
         </div>
       </div>
 
+      <NameMatches :result="itemMatches" noun="item" />
+      <NameMatches :result="containerMatches" noun="container" />
+
       <div class="form-actions">
-        <button class="btn btn-primary" :disabled="!name.trim() || warehouse.saving" @click="create">
+        <button
+          class="btn btn-primary"
+          :disabled="!name.trim() || warehouse.saving || isDuplicate"
+          @click="create"
+        >
           Create item container
         </button>
       </div>

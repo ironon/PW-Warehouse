@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, useTemplateRef } from 'vue'
 import {
   warehouse,
   addContainerType,
@@ -18,19 +18,32 @@ const showNewForm = ref(false)
 const newName = ref('')
 const newColor = ref('#2f6fed')
 const error = ref('')
+// Same as the other Add panels: the form stays open for a run of entries, so
+// this is what confirms each one landed.
+const createdNote = ref('')
+const newNameInput = useTemplateRef<HTMLInputElement>('newNameInput')
+
+function toggleNewForm() {
+  showNewForm.value = !showNewForm.value
+  createdNote.value = ''
+}
 
 const expandedId = ref<string | null>(null)
 const editName = ref('')
 const editColor = ref('#2f6fed')
 
 async function create() {
-  if (!newName.value.trim()) return
+  const name = newName.value.trim()
+  if (!name || warehouse.saving) return
   error.value = ''
   try {
-    await addContainerType({ name: newName.value.trim(), color: newColor.value })
+    await addContainerType({ name, color: newColor.value })
+    // Only the name clears — the colour is usually nudged from the picker for
+    // each new type, and resetting it would undo that every time.
     newName.value = ''
-    newColor.value = '#2f6fed'
-    showNewForm.value = false
+    createdNote.value = `Created “${name}”.`
+    await nextTick()
+    newNameInput.value?.focus()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -123,8 +136,8 @@ async function applyBulk() {
 
     <div class="panel-toolbar">
       <input v-model="query" type="search" placeholder="Search container types…" />
-      <button class="btn btn-primary" @click="showNewForm = !showNewForm">
-        {{ showNewForm ? 'Cancel' : '+ New Container Type' }}
+      <button class="btn btn-primary" @click="toggleNewForm">
+        {{ showNewForm ? 'Done' : '+ New Container Type' }}
       </button>
     </div>
 
@@ -132,7 +145,13 @@ async function applyBulk() {
       <div class="form-grid">
         <div class="field">
           <label>Name</label>
-          <input v-model="newName" type="text" placeholder="e.g. Small Tote" />
+          <input
+            ref="newNameInput"
+            v-model="newName"
+            type="text"
+            placeholder="e.g. Small Tote"
+            @keydown.enter.prevent="create"
+          />
         </div>
         <div class="field">
           <label>Color</label>
@@ -140,7 +159,10 @@ async function applyBulk() {
         </div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-primary" :disabled="!newName.trim()" @click="create">Create type</button>
+        <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
+        <button class="btn btn-primary" :disabled="!newName.trim() || warehouse.saving" @click="create">
+          Create type
+        </button>
       </div>
     </div>
 
@@ -176,6 +198,13 @@ async function applyBulk() {
 </template>
 
 <style scoped>
+.created-note {
+  margin-right: auto;
+  align-self: center;
+  font-size: 13px;
+  color: var(--success);
+}
+
 .muted {
   color: var(--text-muted);
   font-size: 12px;

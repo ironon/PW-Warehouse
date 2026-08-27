@@ -2,9 +2,10 @@
 import { ref } from 'vue'
 import ContainersPanel from './add/ContainersPanel.vue'
 import ItemsPanel from './add/ItemsPanel.vue'
+import ItemContainersPanel from './add/ItemContainersPanel.vue'
 import ContainerTypesPanel from './add/ContainerTypesPanel.vue'
 
-const tab = ref<'containers' | 'items' | 'types'>('containers')
+const tab = ref<'containers' | 'items' | 'itemContainers' | 'types'>('containers')
 </script>
 
 <template>
@@ -12,11 +13,13 @@ const tab = ref<'containers' | 'items' | 'types'>('containers')
     <div class="tabs">
       <button :class="{ active: tab === 'containers' }" @click="tab = 'containers'">Containers</button>
       <button :class="{ active: tab === 'items' }" @click="tab = 'items'">Items</button>
+      <button :class="{ active: tab === 'itemContainers' }" @click="tab = 'itemContainers'">Item Containers</button>
       <button :class="{ active: tab === 'types' }" @click="tab = 'types'">Container Types</button>
     </div>
 
     <ContainersPanel v-if="tab === 'containers'" />
     <ItemsPanel v-else-if="tab === 'items'" />
+    <ItemContainersPanel v-else-if="tab === 'itemContainers'" />
     <ContainerTypesPanel v-else />
   </div>
 </template>
@@ -53,7 +56,7 @@ const tab = ref<'containers' | 'items' | 'types'>('containers')
 }
 
 @media (max-width: 860px) {
-  /* Let the three sub-tabs scroll sideways rather than wrap awkwardly. */
+  /* Let the sub-tabs scroll sideways rather than wrap awkwardly. */
   .tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;

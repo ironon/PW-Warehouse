@@ -470,6 +470,57 @@ export async function addContainer(input: { location: string; label?: string; co
   })
 }
 
+/**
+ * Where a container sits when nobody has recorded a shelf position for it.
+ * A real string rather than '' so it reads as a deliberate "not placed yet"
+ * everywhere a location is shown, and so it can be searched for.
+ */
+export const UNKNOWN_LOCATION = 'Unknown'
+
+/**
+ * A thing that is its own box: creates the Item and the Container together,
+ * in one atomic write. Two records for one physical object, so they must not
+ * be able to exist apart - an item with no box, or a box with no item, would
+ * both be wrong.
+ */
+export async function addItemContainer(input: {
+  name: string
+  notes?: string
+}): Promise<{ item: Item; container: Container }> {
+  return withSaving(async () => {
+    const name = input.name.trim()
+    const notes = (input.notes ?? '').trim()
+    const itemId = nextId('I', state.items)
+    const containerId = nextId('C', [...state.containers, ...state.trash])
+
+    const updates: Record<string, unknown> = {
+      [`items/${itemId}`]: compact({ name, notes }),
+      [`containers/${containerId}`]: compact({ location: UNKNOWN_LOCATION, label: name, notes }),
+    }
+    addLogsToUpdates(updates, [
+      {
+        action: 'itemContainer.create',
+        summary: `Created item container "${name}" (item ${itemId} and container ${containerId} at ${UNKNOWN_LOCATION})`,
+        containerId,
+      },
+    ])
+    await update(rootRef(), updates)
+
+    return {
+      item: { id: itemId, name, notes },
+      container: {
+        id: containerId,
+        location: UNKNOWN_LOCATION,
+        containerType: '',
+        contents: [],
+        label: name,
+        notes,
+        flags: [],
+      },
+    }
+  })
+}
+
 export async function updateContainer(id: string, patch: Partial<Omit<Container, 'id' | 'contents' | 'flags'>>): Promise<void> {
   return withSaving(async () => {
     const before = state.containers.find((c) => c.id === id)
@@ -1375,7 +1426,9 @@ export function knownShelves(): string[] {
   const set = new Set<string>()
   for (const c of state.containers) {
     const root = c.location.split('-')[0]
-    if (root) set.add(root)
+    // UNKNOWN_LOCATION is a placeholder, not a shelving unit: there is nothing
+    // there to photograph, so it must not reach the Scan Shelf dropdown.
+    if (root && root !== UNKNOWN_LOCATION) set.add(root)
   }
   return [...set].sort()
 }

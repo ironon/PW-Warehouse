@@ -19,7 +19,12 @@ out of scope" below.
   label that happens to resemble an address still searches as text.
 - **Add** covers full CRUD for Containers, Items, and Container Types,
   including managing a Container's contents (ItemStacks), and a bulk
-  "assign every container on shelf X to type Y" tool.
+  "assign every container on shelf X to type Y" tool. **Item Containers** is a
+  shortcut for a thing that is its own box: one name and notes creates the
+  Item and the Container together, in a single atomic write, with the
+  container labelled the same and parked at location `Unknown`. Every "new"
+  form in Add stays open after a create and clears itself, so a run of
+  additions is one continuous task rather than a click per entry.
 - **Scan Shelf** photographs one shelf and uses Gemini to read the labels
   and work out where each box sits — see below.
 - **AI Work** is a conversation with an agent that can change the inventory:

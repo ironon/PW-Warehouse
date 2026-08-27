@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, useTemplateRef } from 'vue'
 import {
   warehouse,
   addContainer,
@@ -74,9 +74,18 @@ const newLocation = ref('')
 const newLabel = ref('')
 const newContainerType = ref('')
 const newNotes = ref('')
+// The form stays open after a create, so this is the only thing confirming
+// the click landed.
+const createdNote = ref('')
+const newLabelInput = useTemplateRef<HTMLInputElement>('newLabelInput')
+
+function toggleNewForm() {
+  showNewForm.value = !showNewForm.value
+  createdNote.value = ''
+}
 
 async function createContainer() {
-  if (!newLocation.value.trim()) return
+  if (!newLocation.value.trim() || warehouse.saving) return
   error.value = ''
   try {
     const c = await addContainer({
@@ -86,13 +95,34 @@ async function createContainer() {
       notes: newNotes.value.trim(),
     })
     const createdLabel = newLabel.value.trim()
-    newLocation.value = ''
+
+    // Location and type carry over — a run of new boxes is usually the same
+    // shelf and the same kind of box. Label and notes identify one specific
+    // box, so they always clear.
     newLabel.value = ''
-    newContainerType.value = ''
     newNotes.value = ''
-    showNewForm.value = false
+    createdNote.value = `Created “${createdLabel || c.id}” at ${c.location}.`
+
+    // Open the new container so its contents can be filled in straight away,
+    // seeded from what was actually created. (Leaving the edit fields holding
+    // whatever was last edited would let Save overwrite the new container with
+    // another one's details.)
     expandedId.value = c.id
-    promptPrint(createdLabel, 'created')
+    editLocation.value = c.location
+    editLabel.value = c.label
+    editContainerType.value = c.containerType
+    editNotes.value = c.notes
+    newStackItemName.value = ''
+    newStackQuantity.value = ''
+
+    if (createdLabel) {
+      // The print prompt is the thing that wants attention now; stealing focus
+      // back to the form behind it would just fight the dialog.
+      promptPrint(createdLabel, 'created')
+    } else {
+      await nextTick()
+      newLabelInput.value?.focus()
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -235,8 +265,8 @@ async function removeContent(stackId: string) {
 
     <div class="panel-toolbar">
       <input v-model="query" type="search" placeholder="Search containers by label, location, or id…" />
-      <button class="btn btn-primary" @click="showNewForm = !showNewForm">
-        {{ showNewForm ? 'Cancel' : '+ New Container' }}
+      <button class="btn btn-primary" @click="toggleNewForm">
+        {{ showNewForm ? 'Done' : '+ New Container' }}
       </button>
     </div>
 
@@ -268,7 +298,13 @@ async function removeContent(stackId: string) {
         </div>
         <div class="field">
           <label>Label</label>
-          <input v-model="newLabel" type="text" placeholder="What's in/on this container" />
+          <input
+            ref="newLabelInput"
+            v-model="newLabel"
+            type="text"
+            placeholder="What's in/on this container"
+            @keydown.enter.prevent="createContainer"
+          />
         </div>
         <div class="field">
           <label>Container Type</label>
@@ -283,7 +319,10 @@ async function removeContent(stackId: string) {
         </div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-primary" :disabled="!newLocation.trim()" @click="createContainer">Create container</button>
+        <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
+        <button class="btn btn-primary" :disabled="!newLocation.trim() || warehouse.saving" @click="createContainer">
+          Create container
+        </button>
       </div>
     </div>
 
@@ -383,6 +422,13 @@ async function removeContent(stackId: string) {
 </template>
 
 <style scoped>
+.created-note {
+  margin-right: auto;
+  align-self: center;
+  font-size: 13px;
+  color: var(--success);
+}
+
 /* Pulled up under its row so it reads as part of it, not as a separate item. */
 .row-pending {
   margin: -2px 0 8px;

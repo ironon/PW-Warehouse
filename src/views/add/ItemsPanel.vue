@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, useTemplateRef } from 'vue'
 import { warehouse, addItem, updateItem, deleteItem } from '../../store/warehouse'
 
 const query = ref('')
@@ -11,22 +11,35 @@ const showNewForm = ref(false)
 const newName = ref('')
 const newNotes = ref('')
 const error = ref('')
+// The form stays open after a create so a run of items is one continuous
+// task; this is then the only signal that the click did anything.
+const createdNote = ref('')
+const newNameInput = useTemplateRef<HTMLInputElement>('newNameInput')
 
 const expandedId = ref<string | null>(null)
 const editName = ref('')
 const editNotes = ref('')
 
 async function createItem() {
-  if (!newName.value.trim()) return
+  const name = newName.value.trim()
+  if (!name || warehouse.saving) return
   error.value = ''
   try {
-    await addItem({ name: newName.value.trim(), notes: newNotes.value.trim() })
+    await addItem({ name, notes: newNotes.value.trim() })
     newName.value = ''
     newNotes.value = ''
-    showNewForm.value = false
+    createdNote.value = `Created “${name}”.`
+    // Back to the top field so the next one is all typing, no clicking.
+    await nextTick()
+    newNameInput.value?.focus()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
+}
+
+function toggleNewForm() {
+  showNewForm.value = !showNewForm.value
+  createdNote.value = ''
 }
 
 function expand(id: string) {
@@ -69,8 +82,8 @@ async function remove(id: string) {
 
     <div class="panel-toolbar">
       <input v-model="query" type="search" placeholder="Search items…" />
-      <button class="btn btn-primary" @click="showNewForm = !showNewForm">
-        {{ showNewForm ? 'Cancel' : '+ New Item' }}
+      <button class="btn btn-primary" @click="toggleNewForm">
+        {{ showNewForm ? 'Done' : '+ New Item' }}
       </button>
     </div>
 
@@ -78,7 +91,13 @@ async function remove(id: string) {
       <div class="form-grid single">
         <div class="field">
           <label>Name</label>
-          <input v-model="newName" type="text" placeholder="Item name" />
+          <input
+            ref="newNameInput"
+            v-model="newName"
+            type="text"
+            placeholder="Item name"
+            @keydown.enter.prevent="createItem"
+          />
         </div>
         <div class="field">
           <label>Notes</label>
@@ -86,7 +105,10 @@ async function remove(id: string) {
         </div>
       </div>
       <div class="form-actions">
-        <button class="btn btn-primary" :disabled="!newName.trim()" @click="createItem">Create item</button>
+        <span v-if="createdNote" class="created-note">{{ createdNote }}</span>
+        <button class="btn btn-primary" :disabled="!newName.trim() || warehouse.saving" @click="createItem">
+          Create item
+        </button>
       </div>
     </div>
 
@@ -126,5 +148,11 @@ async function remove(id: string) {
 }
 .empty {
   padding: 12px 0;
+}
+.created-note {
+  margin-right: auto;
+  align-self: center;
+  font-size: 13px;
+  color: var(--success);
 }
 </style>

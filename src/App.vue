@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { warehouse, load } from './store/warehouse'
 import { isMobile, sidebarOpen, toggleSidebar, closeDrawer } from './store/ui'
 import { loadStocks } from './store/labelStock'
@@ -15,6 +15,11 @@ import LogsView from './views/LogsView.vue'
 import TrashView from './views/TrashView.vue'
 import type { Tab } from './lib/types'
 
+// The truss calculator carries three.js with it, which is larger than the
+// whole rest of the app. Loading it only when somebody opens that tab keeps
+// the shelf lookup people use on their phones as light as it was.
+const TrussView = defineAsyncComponent(() => import('./views/TrussView.vue'))
+
 const tab = ref<Tab>('search')
 
 const TITLES: Record<Tab, string> = {
@@ -22,6 +27,7 @@ const TITLES: Record<Tab, string> = {
   add: 'Add',
   scan: 'Scan Shelf',
   ai: 'AI Work',
+  truss: 'Truss Calculator',
   print: 'Print Label',
   logs: 'Logs',
   trash: 'Deleted Containers',
@@ -56,6 +62,7 @@ onMounted(() => {
       <AddView v-else-if="tab === 'add'" />
       <ScanView v-else-if="tab === 'scan'" />
       <AiWorkView v-else-if="tab === 'ai'" />
+      <TrussView v-else-if="tab === 'truss'" />
       <PrintView v-else-if="tab === 'print'" />
       <LogsView v-else-if="tab === 'logs'" />
       <TrashView v-else />

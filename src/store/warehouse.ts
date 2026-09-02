@@ -12,6 +12,7 @@ import {
 } from 'firebase/database'
 import { db } from '../lib/firebase'
 import { currentUser } from './user'
+import { specFromStored, type TrussSetup } from '../lib/truss'
 import type {
   Item,
   ItemStack,
@@ -61,6 +62,8 @@ interface State {
   trash: Container[]
   logs: LogEntry[] // newest first
   aiConversations: AiConversation[] // newest first
+  /** Saved truss builds, newest first. */
+  trussSetups: TrussSetup[]
   /** Shared standing rules the AI agent must respect when placing boxes. */
   placementRules: string
 }
@@ -77,6 +80,7 @@ const state = reactive<State>({
   trash: [],
   logs: [],
   aiConversations: [],
+  trussSetups: [],
   placementRules: '',
 })
 
@@ -145,6 +149,7 @@ export function load(): Promise<void> {
     'logs',
     'settings',
     'aiConversations',
+    'trussSetups',
   ])
 
   loadPromise = new Promise((resolve) => {
@@ -225,6 +230,18 @@ export function load(): Promise<void> {
       state.trash = all
         .filter((c) => c.deleted)
         .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+    })
+
+    watch<{ name?: string; spec?: unknown; savedBy?: string; savedAt?: number }>('trussSetups', (val) => {
+      state.trussSetups = Object.entries(val ?? {})
+        .map(([id, v]) => ({
+          id,
+          name: v.name ?? '(unnamed)',
+          spec: specFromStored(v.spec),
+          savedBy: v.savedBy ?? 'unknown',
+          savedAt: v.savedAt ?? 0,
+        }))
+        .sort((a, b) => b.savedAt - a.savedAt)
     })
 
     watch<unknown>('settings', (val) => {
@@ -1567,6 +1584,46 @@ export async function recordAiPlanApplied(input: {
  *  in the Logs tab - this only forgets the discussion, never the effects. */
 export async function deleteAiConversation(id: string): Promise<void> {
   await remove(ref(db, `aiConversations/${id}`))
+}
+
+// --- Truss setups --------------------------------------------------------
+
+/** Stores one build so the rest of the crew can pull it up. Overwrites a
+ *  setup of the same name rather than accumulating near-duplicates. */
+export async function saveTrussSetup(name: string, spec: TrussSetup['spec']): Promise<string> {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Give the setup a name first.')
+
+  return withSaving(async () => {
+    const existing = state.trussSetups.find(
+      (s) => s.name.trim().toLowerCase() === trimmed.toLowerCase()
+    )
+    const id = existing?.id ?? push(ref(db, 'trussSetups')).key
+    if (!id) throw new Error('Could not save the setup.')
+
+    await set(ref(db, `trussSetups/${id}`), {
+      name: trimmed,
+      spec: { ...spec, stock: [...spec.stock] },
+      savedBy: currentUser(),
+      savedAt: Date.now(),
+    })
+    await logChange({
+      action: existing ? 'truss.update' : 'truss.create',
+      summary: `${existing ? 'Updated' : 'Saved'} truss setup “${trimmed}” (${spec.panelsWide}x${spec.panelsHigh} panels)`,
+    })
+    return id
+  })
+}
+
+export async function deleteTrussSetup(id: string): Promise<void> {
+  const setup = state.trussSetups.find((s) => s.id === id)
+  return withSaving(async () => {
+    await remove(ref(db, `trussSetups/${id}`))
+    await logChange({
+      action: 'truss.delete',
+      summary: `Deleted truss setup “${setup?.name ?? id}”`,
+    })
+  })
 }
 
 // --- Lookups -------------------------------------------------------------

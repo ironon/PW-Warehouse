@@ -244,6 +244,7 @@ a {
 .search-view,
 .add-view,
 .scan-view,
+.truss-view,
 .print-view,
 .logs-view,
 .trash-view {
@@ -254,6 +255,7 @@ a {
   .search-view,
   .add-view,
   .scan-view,
+  .truss-view,
   .print-view,
   .logs-view,
   .trash-view {

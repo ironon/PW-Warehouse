@@ -16,6 +16,7 @@ const tabs: { id: Tab; icon: IconName; label: string }[] = [
   { id: 'add', icon: 'plus', label: 'Add' },
   { id: 'scan', icon: 'camera', label: 'Scan Shelf' },
   { id: 'ai', icon: 'sparkles', label: 'AI Work' },
+  { id: 'truss', icon: 'truss', label: 'Truss Calc' },
   { id: 'print', icon: 'printer', label: 'Print Label' },
   { id: 'logs', icon: 'history', label: 'Logs' },
   { id: 'trash', icon: 'trash', label: 'Deleted' },

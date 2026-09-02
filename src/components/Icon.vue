@@ -69,6 +69,12 @@ withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 })
       <path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" />
       <path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
     </template>
+    <template v-else-if="name === 'truss'">
+      <!-- The L frame: tall leg against the wall, short foot on the ground. -->
+      <path d="M4 3h5v13h11v5H4z" />
+      <line x1="4" y1="9" x2="9" y2="14" />
+      <line x1="11" y1="16" x2="16" y2="21" />
+    </template>
     <template v-else-if="name === 'check'">
       <polyline points="20 6 9 17 4 12" />
     </template>

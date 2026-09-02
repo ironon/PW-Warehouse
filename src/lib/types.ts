@@ -64,7 +64,7 @@ export interface Container {
   pendingMove?: PendingMove
 }
 
-export type Tab = 'search' | 'add' | 'scan' | 'ai' | 'print' | 'logs' | 'trash'
+export type Tab = 'search' | 'add' | 'scan' | 'ai' | 'truss' | 'print' | 'logs' | 'trash'
 
 export type IconName =
   | 'search'
@@ -79,6 +79,7 @@ export type IconName =
   | 'chevron-left'
   | 'chevron-right'
   | 'sparkles'
+  | 'truss'
   | 'check'
   | 'arrow-right'
   | 'send'
